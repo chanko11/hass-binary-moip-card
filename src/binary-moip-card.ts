@@ -252,7 +252,7 @@ export class BinaryMoipCard extends LitElement {
           ${input
             ? this._renderStreamCard(input)
             : html`<div class="note">No input available</div>`}
-          ${zoneStates.length ? this._renderMaster(zoneStates) : nothing}
+          ${input && zoneStates.length ? this._renderMaster(input, zoneStates) : nothing}
           ${zoneStates.map((z) => this._renderZoneRow(z))}
           ${input && src && zoneStates.length === 0
             ? html`<div class="note">No zones yet — add one below to hear this.</div>`
@@ -489,7 +489,7 @@ export class BinaryMoipCard extends LitElement {
 
   // --- master + zone rows (reused from v1) ----------------------------------
 
-  private _renderMaster(zoneStates: HassEntity[]) {
+  private _renderMaster(input: InputConfig, zoneStates: HassEntity[]) {
     const value = averageVolumePct(zoneStates);
     return html`
       <div class="row master">
@@ -499,8 +499,29 @@ export class BinaryMoipCard extends LitElement {
           @change=${(e: Event) =>
             this._run(masterDeltaCalls(zoneStates, Number((e.target as HTMLInputElement).value)))} />
         <span class="pct">${value}%</span>
+        <button class="icon-btn" title="Turn off — remove all zones"
+          @click=${() => this._turnOff(input, zoneStates)}>
+          <ha-icon icon="mdi:power"></ha-icon>
+        </button>
       </div>
     `;
+  }
+
+  /** Turn the whole stream off: drop every zone, and stop it if it has transport. */
+  private _turnOff(input: InputConfig, zoneStates: HassEntity[]): void {
+    const calls: ServiceCall[] = zoneStates.map((z) => unjoinCall(z.entity_id));
+    const src = this._src(input);
+    if (src && sourceHasTransport(src)) {
+      calls.push({
+        domain: "media_player",
+        service: "media_stop",
+        data: { entity_id: input.entity },
+      });
+    }
+    this._run(calls);
+    const next = { ...this._picked };
+    delete next[input.entity];
+    this._picked = next;
   }
 
   private _renderZoneRow(zone: HassEntity) {
