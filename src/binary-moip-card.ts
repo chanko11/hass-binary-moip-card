@@ -132,6 +132,14 @@ export class BinaryMoipCard extends LitElement {
     if (!isPlaying(src?.state)) {
       return { label: "Idle", icon: input.icon ?? "mdi:music" };
     }
+    // Detect a Spotify-Connect cast from the backing MA player's live state
+    // (source "Spotify Connect" / app_id "spotify_connect--…") — that's the real
+    // source even if the user picked something else from the card earlier.
+    const a = (input.ma_player ? this.hass.states[input.ma_player] : undefined)?.attributes ?? {};
+    if (a.source === "Spotify Connect" || String(a.app_id ?? "").startsWith("spotify_connect")) {
+      const cs = this._sources.find((s) => s.type === "connect");
+      return { label: cs?.label ?? "Spotify Connect", icon: cs?.icon ?? "mdi:spotify" };
+    }
     const picked = this._picked[input.entity];
     if (picked) return picked;
     const lib = this._sources.find((s): s is LibrarySource => s.type === "library");
