@@ -203,8 +203,10 @@ export class BinaryMoipCard extends LitElement {
   /** Tap a browse item: play it if playable, else drill in. */
   private _onItem(input: InputConfig, node: BrowseNode, source: LibrarySource): void {
     if (node.can_play && input.ma_player) {
-      const radioMode = this._nav[0]?.media_content_id === "radio";
-      this._run(playItemCall(input.ma_player, node.media_content_id, { radioMode }));
+      // Play the item's URI as-is. Do NOT set radio_mode: it means "seed an
+      // endless station from a track/artist", which MA rejects for an actual
+      // Radio MediaItem ("Dynamic tracks not supported for Radio MediaItem").
+      this._run(playItemCall(input.ma_player, node.media_content_id));
       // Breadcrumb of what was picked: the drill path within the source + item,
       // e.g. "Radio · Pandora · 90s Rock" — makes the source row say what's on.
       const crumb = [...this._nav.map((n) => n.title), node.title]
@@ -252,6 +254,9 @@ export class BinaryMoipCard extends LitElement {
             : html`<div class="note">No input available</div>`}
           ${zoneStates.length ? this._renderMaster(zoneStates) : nothing}
           ${zoneStates.map((z) => this._renderZoneRow(z))}
+          ${input && src && zoneStates.length === 0
+            ? html`<div class="note">No zones yet — add one below to hear this.</div>`
+            : nothing}
           ${input && src ? this._renderAddZones(input, src) : nothing}
         </div>
       </ha-card>
