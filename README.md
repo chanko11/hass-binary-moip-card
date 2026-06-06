@@ -1,7 +1,9 @@
 # Binary MoIP Source Session card
 
-A custom Lovelace card for the [`binary_moip`](../README.md) integration that
-gives you **source-first** whole-home audio control: pick a source, see its
+A custom Lovelace card for the
+[`binary_moip`](https://github.com/chanko11/hass-binary-moip) Home Assistant
+integration that gives you **source-first** whole-home audio control: pick a
+source, see its
 now-playing and transport, set a master volume, and add/remove the zones in that
 listening session.
 
@@ -30,16 +32,24 @@ All state is read live from Home Assistant; external changes appear immediately.
 
 ## Install
 
-### Manual (works today)
+### HACS (recommended)
 
-1. Build the bundle (or grab `dist/binary-moip-source-card.js` from this repo):
-   ```bash
-   cd binary-moip-card
-   npm install
-   npm run build
-   ```
-2. Copy `dist/binary-moip-source-card.js` into your HA config under
-   `config/www/`.
+This repo is a HACS **Dashboard / Lovelace plugin**.
+
+1. HACS → **⋮ → Custom repositories** → add
+   `https://github.com/chanko11/hass-binary-moip-card`, category **Dashboard**.
+2. Find **Binary MoIP Source Session Card** → **Download**.
+3. HACS registers the Lovelace resource automatically; reload your browser.
+4. Add the card to a dashboard (see config below).
+
+> A tagged GitHub release is required for HACS to offer a version. Until one is
+> published, use the manual install below.
+
+### Manual
+
+1. Grab `dist/binary-moip-source-card.js` from this repo (or build it — see
+   Development).
+2. Copy it into your HA config under `config/www/`.
 3. Add it as a dashboard resource — **Settings → Dashboards → ⋮ → Resources →
    Add resource**:
    - URL: `/local/binary-moip-source-card.js`
