@@ -1,5 +1,5 @@
 {
-  "name": "Binary MoIP Source Session Card",
+  "name": "Binary MoIP Audio Card",
   "render_readme": true,
-  "filename": "binary-moip-source-card.js"
+  "filename": "binary-moip-card.js"
 }

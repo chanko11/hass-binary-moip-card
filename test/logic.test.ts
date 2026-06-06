@@ -3,13 +3,16 @@ import { test } from "node:test";
 
 import {
   averageVolumePct,
+  currentPresetIndex,
   discoverZoneIds,
   groupZones,
+  isConnectPreset,
   isSourceActive,
   joinCall,
   masterDeltaCalls,
   muteCall,
   pct,
+  playMediaCall,
   sessionZoneIds,
   sourceHasTransport,
   transportCall,
@@ -17,7 +20,12 @@ import {
   volumeSetCall,
   zoneToSourceMap,
 } from "../src/logic.ts";
-import { HassEntity, HomeAssistant, MediaPlayerFeature } from "../src/types.ts";
+import {
+  ContentPreset,
+  HassEntity,
+  HomeAssistant,
+  MediaPlayerFeature,
+} from "../src/types.ts";
 
 function ent(
   entity_id: string,
@@ -229,4 +237,64 @@ test("groupZones falls back to area name, then 'Zones'", () => {
     { label: "Kitchen", zones: ["media_player.a"] },
     { label: "Zones", zones: ["media_player.b"] },
   ]);
+});
+
+// --- v2: content swap (preset -> music_assistant.play_media) ------------------
+
+test("playMediaCall builds a music_assistant.play_media for an MA preset", () => {
+  const preset: ContentPreset = {
+    label: "Yacht Rock",
+    media_id: "library://playlist/123",
+    media_type: "playlist",
+  };
+  assert.deepEqual(playMediaCall("media_player.streaming_1", preset), {
+    domain: "music_assistant",
+    service: "play_media",
+    data: {
+      entity_id: "media_player.streaming_1",
+      media_id: "library://playlist/123",
+      enqueue: "replace",
+      media_type: "playlist",
+    },
+  });
+});
+
+test("playMediaCall includes radio_mode only when set", () => {
+  const radio: ContentPreset = {
+    label: "KUTX",
+    media_id: "http://stream",
+    media_type: "radio",
+    radio_mode: true,
+  };
+  assert.equal(playMediaCall("media_player.streaming_2", radio)!.data.radio_mode, true);
+
+  const plain: ContentPreset = { label: "P", media_id: "x" };
+  assert.equal("radio_mode" in playMediaCall("media_player.s", plain)!.data, false);
+  assert.equal("media_type" in playMediaCall("media_player.s", plain)!.data, false);
+});
+
+test("playMediaCall is a no-op (null) for the Spotify-Connect entry", () => {
+  const connect: ContentPreset = { label: "Spotify Connect", type: "connect" };
+  assert.equal(playMediaCall("media_player.streaming_1", connect), null);
+  assert.equal(isConnectPreset(connect), true);
+});
+
+test("playMediaCall is a no-op when the stream has no MA player", () => {
+  const preset: ContentPreset = { label: "P", media_id: "x" };
+  assert.equal(playMediaCall(undefined, preset), null);
+});
+
+test("currentPresetIndex matches the playing content by media_content_id", () => {
+  const presets: ContentPreset[] = [
+    { label: "Spotify Connect", type: "connect" },
+    { label: "Yacht Rock", media_id: "library://playlist/123" },
+    { label: "KUTX", media_id: "http://stream" },
+  ];
+  const ma = ent("media_player.streaming_1", "playing", {
+    media_content_id: "library://playlist/123",
+  });
+  assert.equal(currentPresetIndex(ma, presets), 1);
+  // nothing playing / unknown id -> -1
+  assert.equal(currentPresetIndex(ent("media_player.s", "idle", {}), presets), -1);
+  assert.equal(currentPresetIndex(undefined, presets), -1);
 });

@@ -1,7 +1,7 @@
 {
-  "name": "binary-moip-source-card",
-  "version": "0.1.0",
-  "description": "Source-first session Lovelace card for the Binary MoIP integration",
+  "name": "binary-moip-card",
+  "version": "2.0.0",
+  "description": "Streaming-as-parent whole-home audio Lovelace card for the Binary MoIP integration",
   "license": "MIT",
   "type": "module",
   "scripts": {

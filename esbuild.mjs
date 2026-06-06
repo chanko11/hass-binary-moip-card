@@ -2,11 +2,11 @@ import { build } from "esbuild";
 
 const dev = process.argv.includes("--watch");
 const opts = {
-  entryPoints: ["src/binary-moip-source-card.ts"],
+  entryPoints: ["src/binary-moip-card.ts"],
   bundle: true,
   format: "esm",
   target: "es2021",
-  outfile: "dist/binary-moip-source-card.js",
+  outfile: "dist/binary-moip-card.js",
   minify: !dev,
   sourcemap: dev,
   legalComments: "none",
@@ -18,5 +18,5 @@ if (dev) {
   console.log("watching…");
 } else {
   await build(opts);
-  console.log("built dist/binary-moip-source-card.js");
+  console.log("built dist/binary-moip-card.js");
 }

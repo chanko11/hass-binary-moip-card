@@ -3,11 +3,12 @@
 // DOM or Lit. The card component is a thin rendering layer over these.
 
 import {
+  ContentPreset,
   HassEntity,
   HomeAssistant,
   MediaPlayerFeature,
   ServiceCall,
-  SourceCardConfig,
+  ZoneSourceConfig,
 } from "./types";
 
 export const clamp = (n: number, lo: number, hi: number): number =>
@@ -142,7 +143,7 @@ export function zoneToSourceMap(
 /** The universe of zones for the picker. */
 export function discoverZoneIds(
   hass: HomeAssistant,
-  config: SourceCardConfig
+  config: ZoneSourceConfig
 ): string[] {
   if (config.zone_groups) {
     const ids = new Set<string>();
@@ -152,7 +153,7 @@ export function discoverZoneIds(
     return [...ids].filter((id) => hass.states[id]);
   }
   // Fallback: every binary_moip media_player that isn't a configured source.
-  const sources = new Set(config.sources);
+  const sources = new Set(config.sources ?? []);
   const out: string[] = [];
   for (const [eid, ent] of Object.entries(hass.entities ?? {})) {
     if (
@@ -189,7 +190,7 @@ export interface ZoneGroup {
 /** Group zones for the Add-zones picker: by config.zone_groups, else by HA area. */
 export function groupZones(
   hass: HomeAssistant,
-  config: SourceCardConfig,
+  config: ZoneSourceConfig,
   zoneIds: string[]
 ): ZoneGroup[] {
   if (config.zone_groups) {
@@ -208,4 +209,52 @@ export function groupZones(
   return Object.entries(groups)
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([label, zones]) => ({ label, zones }));
+}
+
+// --- v2: content swap (streams only) ----------------------------------------
+
+/** Whether a preset is the informational Spotify-Connect entry (no HA action). */
+export function isConnectPreset(p: ContentPreset): boolean {
+  return (p as { type?: string }).type === "connect";
+}
+
+/**
+ * Build the content-swap action for a stream: play the chosen preset on that
+ * stream's backing Music Assistant player. Routing is untouched (it lives on
+ * the binary_moip source), so the already-routed zones keep playing the new
+ * content. Returns null for the Spotify-Connect entry (you cast from the app —
+ * there is no HA action) and when no MA player is configured for the stream.
+ */
+export function playMediaCall(
+  maPlayer: string | undefined,
+  preset: ContentPreset
+): ServiceCall | null {
+  if (isConnectPreset(preset) || !maPlayer) return null;
+  const p = preset as Exclude<ContentPreset, { type: "connect" }>;
+  const data: Record<string, unknown> = {
+    entity_id: maPlayer,
+    media_id: p.media_id,
+    enqueue: "replace",
+  };
+  if (p.media_type) data.media_type = p.media_type;
+  if (p.radio_mode) data.radio_mode = true;
+  return { domain: "music_assistant", service: "play_media", data };
+}
+
+/**
+ * Best-effort index of the preset currently playing on a stream's MA player,
+ * matched by media_content_id; -1 if none/unknown. Used to highlight the
+ * current content in the picker and as the tile headline.
+ */
+export function currentPresetIndex(
+  maState: HassEntity | undefined,
+  presets: ContentPreset[]
+): number {
+  const cid = maState?.attributes.media_content_id;
+  if (!cid || typeof cid !== "string") return -1;
+  return presets.findIndex((p) => {
+    if (isConnectPreset(p)) return false;
+    const id = (p as { media_id?: string }).media_id;
+    return !!id && (cid === id || cid.includes(id) || id.includes(cid));
+  });
 }

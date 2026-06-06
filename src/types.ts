@@ -10,6 +10,7 @@ export interface HassEntityAttributes {
   is_volume_muted?: boolean;
   media_title?: string;
   media_artist?: string;
+  media_content_id?: string;
   entity_picture?: string;
   media_position?: number;
   media_duration?: number;
@@ -51,11 +52,59 @@ export interface HomeAssistant {
   ): Promise<unknown>;
 }
 
-export interface SourceCardConfig {
+/** Shared shape the zone helpers need: a zone-grouping map and the set of
+ *  source entity_ids to exclude from auto-discovery. v1 and v2 configs both
+ *  satisfy it (v2 passes its input entities as `sources`). */
+export interface ZoneSourceConfig {
+  zone_groups?: Record<string, string[]>;
+  sources?: string[];
+  /** Present on full card configs; ignored by the zone helpers. */
+  type?: string;
+}
+
+// --- v2: streaming-as-parent ------------------------------------------------
+
+export type InputKind = "stream" | "physical";
+
+/** An input is the durable parent that owns zones + volume (a binary_moip
+ *  source). Streams have swappable content (via a backing MA player); physical
+ *  inputs are fixed (the device itself). */
+export interface InputConfig {
+  /** binary_moip source media_player — routing (join/unjoin) + transport. */
+  entity: string;
+  name: string;
+  kind: InputKind;
+  /** stream only: the Music Assistant media_player to target for content swaps. */
+  ma_player?: string;
+  icon?: string;
+}
+
+/** An MA-playable content preset (Pandora/radio/playlist/favorite). */
+export interface MaContentPreset {
+  label: string;
+  icon?: string;
+  media_id: string;
+  media_type?: string;
+  radio_mode?: boolean;
+  type?: undefined;
+}
+
+/** The informational Spotify-Connect entry — no HA action (cast from the app). */
+export interface ConnectPreset {
+  label: string;
+  icon?: string;
+  type: "connect";
+}
+
+export type ContentPreset = MaContentPreset | ConnectPreset;
+
+export interface CardConfig {
   type: string;
-  /** Ordered source media_player entity_ids to show as chips (required). */
-  sources: string[];
-  /** Optional label -> zone entity_ids, for organizing the Add-zones picker. */
+  /** Ordered inputs: the streams + physical line-ins. */
+  inputs: InputConfig[];
+  /** Content presets offered in the stream picker (shared across streams). */
+  content?: ContentPreset[];
+  /** Optional label -> MoIP zone entity_ids, for the Add-zones picker. */
   zone_groups?: Record<string, string[]>;
   title?: string;
 }
