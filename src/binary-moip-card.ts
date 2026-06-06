@@ -69,7 +69,10 @@ export class BinaryMoipCard extends LitElement {
   @state() private _browseError: string | null = null;
   @state() private _connectHint: string | null = null;
   // UI-only: the source the user last picked per input (for the source-row label)
-  @state() private _picked: Record<string, { label: string; icon: string }> = {};
+  @state() private _picked: Record<
+    string,
+    { label: string; icon: string; item?: string }
+  > = {};
 
   public setConfig(config: CardConfig): void {
     if (!config || !Array.isArray(config.inputs) || config.inputs.length === 0) {
@@ -120,7 +123,11 @@ export class BinaryMoipCard extends LitElement {
   /** The current source for a stream's tile/row headline — the SOURCE, never the
    *  track. The last source the user picked (UI state) while playing, else a
    *  derived default ("Music Assistant" when playing), else "Idle". */
-  private _currentSource(input: InputConfig): { label: string; icon: string } {
+  private _currentSource(input: InputConfig): {
+    label: string;
+    icon: string;
+    item?: string;
+  } {
     const src = this._src(input);
     if (!isPlaying(src?.state)) {
       return { label: "Idle", icon: input.icon ?? "mdi:music" };
@@ -198,11 +205,17 @@ export class BinaryMoipCard extends LitElement {
     if (node.can_play && input.ma_player) {
       const radioMode = this._nav[0]?.media_content_id === "radio";
       this._run(playItemCall(input.ma_player, node.media_content_id, { radioMode }));
+      // Breadcrumb of what was picked: the drill path within the source + item,
+      // e.g. "Radio · Pandora · 90s Rock" — makes the source row say what's on.
+      const crumb = [...this._nav.map((n) => n.title), node.title]
+        .filter(Boolean)
+        .join(" · ");
       this._picked = {
         ...this._picked,
         [input.entity]: {
           label: source.label ?? "Music Assistant",
           icon: source.icon ?? "mdi:music-box-multiple",
+          item: crumb,
         },
       };
       this._resetPicker();
@@ -234,10 +247,9 @@ export class BinaryMoipCard extends LitElement {
           : nothing}
         <div class="content">
           ${this._renderRail(input)}
-          ${input ? this._renderContentSlot(input) : html`<div class="note">No input available</div>`}
-          ${input && input.kind === "stream" && this._pickerOpen
-            ? this._renderSourcePicker(input)
-            : nothing}
+          ${input
+            ? this._renderStreamCard(input)
+            : html`<div class="note">No input available</div>`}
           ${zoneStates.length ? this._renderMaster(zoneStates) : nothing}
           ${zoneStates.map((z) => this._renderZoneRow(z))}
           ${input && src ? this._renderAddZones(input, src) : nothing}
@@ -287,10 +299,12 @@ export class BinaryMoipCard extends LitElement {
 
   // --- content slot ---------------------------------------------------------
 
-  private _renderContentSlot(input: InputConfig) {
-    const src = this._src(input);
+  /** The bordered sub-card under the rail. Normally shows the source row + now-
+   *  playing; while changing source it swaps to the source picker in-place. */
+  private _renderStreamCard(input: InputConfig) {
+    let body;
     if (input.kind === "physical") {
-      return html`
+      body = html`
         <div class="content-slot">
           <ha-icon class="slot-icon" icon=${input.icon ?? "mdi:music-box-outline"}></ha-icon>
           <div class="meta">
@@ -299,26 +313,28 @@ export class BinaryMoipCard extends LitElement {
           </div>
         </div>
       `;
-    }
-    const cur = this._currentSource(input);
-    const sub = isPlaying(src?.state) ? input.name : "Tap Change source";
-    return html`
-      <div class="content-slot">
-        <ha-icon class="slot-icon" icon=${cur.icon}></ha-icon>
-        <div class="meta">
-          <div class="title">${cur.label}</div>
-          <div class="artist">${sub}</div>
+    } else if (this._pickerOpen) {
+      body = this._renderSourcePicker(input);
+    } else {
+      const src = this._src(input);
+      const cur = this._currentSource(input);
+      const sub = cur.item ?? (isPlaying(src?.state) ? input.name : "Tap Change source");
+      body = html`
+        <div class="content-slot">
+          <ha-icon class="slot-icon" icon=${cur.icon}></ha-icon>
+          <div class="meta">
+            <div class="title">${cur.label}</div>
+            <div class="artist">${sub}</div>
+          </div>
+          <button class="change-btn" @click=${() => this._openChangeSource()}>
+            Change source
+          </button>
         </div>
-        <button
-          class="change-btn"
-          @click=${() => (this._pickerOpen ? this._resetPicker() : this._openChangeSource())}
-        >
-          Change source
-        </button>
-      </div>
-      <div class="hint">Switching the source keeps the same zones.</div>
-      ${src ? this._renderNowPlaying(src) : nothing}
-    `;
+        <div class="sep"></div>
+        ${this._renderNowPlaying(src)}
+      `;
+    }
+    return html`<div class="subcard">${body}</div>`;
   }
 
   // --- source-first picker: siblings -> (library browse | connect hint) -----
@@ -432,22 +448,24 @@ export class BinaryMoipCard extends LitElement {
 
   // --- now-playing + transport (reused from v1) -----------------------------
 
-  private _renderNowPlaying(source: HassEntity) {
+  private _renderNowPlaying(source: HassEntity | undefined) {
+    if (!source) return nothing;
     if (!sourceHasTransport(source)) {
       return html`<div class="note">No transport for this input.</div>`;
     }
     const a = source.attributes;
+    const idle = !isPlaying(source.state);
     const playing = source.state === "playing";
     return html`
-      <div class="now-playing">
+      <div class="now-playing ${idle ? "idle" : ""}">
         <div class="art">
           ${a.entity_picture
             ? html`<img src=${a.entity_picture} alt="" />`
             : html`<ha-icon icon="mdi:music"></ha-icon>`}
         </div>
         <div class="meta">
-          <div class="title">${a.media_title ?? ""}</div>
-          <div class="artist">${a.media_artist ?? ""}</div>
+          <div class="title">${idle ? "Nothing playing" : a.media_title ?? ""}</div>
+          <div class="artist">${idle ? "Pick a source" : a.media_artist ?? ""}</div>
         </div>
         <div class="transport">
           <button class="icon-btn" @click=${() => this._run(transportCall(source.entity_id, "media_previous_track"))}>
@@ -552,6 +570,22 @@ export class BinaryMoipCard extends LitElement {
     ha-card { overflow: hidden; }
     .content { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
 
+    /* The source + now-playing (or, while changing source, the picker) sub-card. */
+    .subcard {
+      border: 1px solid var(--divider-color);
+      border-radius: 12px;
+      padding: 12px;
+      background: var(--secondary-background-color);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .subcard .sep {
+      height: 1px;
+      background: var(--divider-color);
+      margin: 2px 0;
+    }
+
     .rail {
       display: flex;
       gap: 8px;
@@ -581,9 +615,11 @@ export class BinaryMoipCard extends LitElement {
     }
     .tile-headline {
       font-weight: 600;
-      white-space: nowrap;
+      line-height: 1.15;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      text-overflow: ellipsis;
     }
     .tile-sub {
       font-size: 0.8rem;
@@ -663,7 +699,8 @@ export class BinaryMoipCard extends LitElement {
       border: 1px dashed var(--divider-color);
       background: none; color: var(--primary-color); cursor: pointer;
     }
-    .picker { border-top: 1px solid var(--divider-color); padding-top: 8px; }
+    .picker { display: flex; flex-direction: column; }
+    .now-playing.idle .art, .now-playing.idle .meta { opacity: 0.55; }
     .picker-head {
       display: flex; align-items: center; gap: 6px;
       font-weight: 500; color: var(--primary-text-color);
