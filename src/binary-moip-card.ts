@@ -2,35 +2,41 @@ import { LitElement, css, html, nothing, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
 import {
+  BrowseNode,
   CardConfig,
   HassEntity,
   HomeAssistant,
   InputConfig,
+  LibrarySource,
   ServiceCall,
+  StreamSource,
 } from "./types";
 import {
   averageVolumePct,
-  currentContentIndex,
+  browseMsg,
+  categoryIcon,
+  categoryLabel,
+  DEFAULT_SOURCES,
   discoverZoneIds,
   friendlyName,
   groupZones,
-  isConnectPreset,
+  isConnectSource,
+  isPlaying,
   isSourceActive,
   joinCall,
   masterDeltaCalls,
   muteCall,
   pct,
-  playMediaCall,
+  playItemCall,
   sessionZoneIds,
   sourceHasTransport,
-  streamHeadline,
   transportCall,
   unjoinCall,
   volumeSetCall,
   zoneToSourceMap,
 } from "./logic";
 
-const VERSION = "2.0.1";
+const VERSION = "2.2.0";
 /* eslint-disable no-console */
 console.info(
   `%c binary-moip-card %c ${VERSION} `,
@@ -53,9 +59,17 @@ export class BinaryMoipCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: CardConfig;
   @state() private _selected?: string;
-  @state() private _showContent = false;
   @state() private _showAddZones = false;
+  // Change-source picker (source-first: siblings -> library browse / connect)
+  @state() private _pickerOpen = false;
+  @state() private _openSource: number | null = null; // index into _sources; null = sibling list
+  @state() private _nav: BrowseNode[] = []; // drill path under a library source
+  @state() private _children: BrowseNode[] | null = null;
+  @state() private _browseLoading = false;
+  @state() private _browseError: string | null = null;
   @state() private _connectHint: string | null = null;
+  // UI-only: the source the user last picked per input (for the source-row label)
+  @state() private _picked: Record<string, { label: string; icon: string }> = {};
 
   public setConfig(config: CardConfig): void {
     if (!config || !Array.isArray(config.inputs) || config.inputs.length === 0) {
@@ -66,7 +80,11 @@ export class BinaryMoipCard extends LitElement {
         throw new Error("binary-moip-card: each input needs `entity` and `kind`");
       }
     }
-    this._config = { ...config, content: config.content ?? [] };
+    this._config = config;
+  }
+
+  private get _sources(): StreamSource[] {
+    return this._config.sources ?? DEFAULT_SOURCES;
   }
 
   public getCardSize(): number {
@@ -91,10 +109,6 @@ export class BinaryMoipCard extends LitElement {
     return this.hass.states[input.entity];
   }
 
-  private _ma(input: InputConfig): HassEntity | undefined {
-    return input.ma_player ? this.hass.states[input.ma_player] : undefined;
-  }
-
   /** {zone_groups, sources} for the reused zone helpers (sources = all inputs). */
   private get _zoneCfg() {
     return {
@@ -103,14 +117,98 @@ export class BinaryMoipCard extends LitElement {
     };
   }
 
-  /** Headline for a stream tile/slot: the SOURCE (preset / Spotify Connect /
-   *  provider), never the track — Idle when stopped. */
-  private _streamContent(input: InputConfig): { label: string; icon: string } {
-    return streamHeadline(
-      this._src(input),
-      this._ma(input),
-      this._config.content ?? []
-    );
+  /** The current source for a stream's tile/row headline — the SOURCE, never the
+   *  track. The last source the user picked (UI state) while playing, else a
+   *  derived default ("Music Assistant" when playing), else "Idle". */
+  private _currentSource(input: InputConfig): { label: string; icon: string } {
+    const src = this._src(input);
+    if (!isPlaying(src?.state)) {
+      return { label: "Idle", icon: input.icon ?? "mdi:music" };
+    }
+    const picked = this._picked[input.entity];
+    if (picked) return picked;
+    const lib = this._sources.find((s): s is LibrarySource => s.type === "library");
+    return {
+      label: lib?.label ?? "Music Assistant",
+      icon: lib?.icon ?? "mdi:music-box-multiple",
+    };
+  }
+
+  // --- change-source picker navigation --------------------------------------
+
+  private _resetPicker(): void {
+    this._pickerOpen = false;
+    this._openSource = null;
+    this._nav = [];
+    this._children = null;
+    this._browseError = null;
+    this._connectHint = null;
+  }
+
+  private _openChangeSource(): void {
+    this._resetPicker();
+    this._pickerOpen = true;
+  }
+
+  private async _loadChildren(maPlayer: string, node?: BrowseNode): Promise<void> {
+    this._children = null;
+    this._browseLoading = true;
+    this._browseError = null;
+    try {
+      const res = await this.hass.callWS<BrowseNode>(
+        browseMsg(maPlayer, node?.media_content_id, node?.media_content_type)
+      );
+      this._children = res.children ?? [];
+    } catch {
+      this._browseError = "Couldn't reach Music Assistant.";
+      this._children = [];
+    } finally {
+      this._browseLoading = false;
+    }
+  }
+
+  /** Open a sibling source (library shows its categories; connect shows a hint). */
+  private _selectSource(input: InputConfig, idx: number): void {
+    this._openSource = idx;
+    this._nav = [];
+    this._children = null;
+    this._connectHint = null;
+    if (isConnectSource(this._sources[idx])) {
+      this._connectHint = `Cast from your Spotify app to ${input.name}.`;
+    }
+  }
+
+  private _browseInto(input: InputConfig, node: BrowseNode): void {
+    if (!input.ma_player) return;
+    this._nav = [...this._nav, node];
+    void this._loadChildren(input.ma_player, node);
+  }
+
+  private _navBack(input: InputConfig): void {
+    const nav = this._nav.slice(0, -1);
+    this._nav = nav;
+    this._children = null;
+    if (nav.length && input.ma_player) {
+      void this._loadChildren(input.ma_player, nav[nav.length - 1]);
+    }
+  }
+
+  /** Tap a browse item: play it if playable, else drill in. */
+  private _onItem(input: InputConfig, node: BrowseNode, source: LibrarySource): void {
+    if (node.can_play && input.ma_player) {
+      const radioMode = this._nav[0]?.media_content_id === "radio";
+      this._run(playItemCall(input.ma_player, node.media_content_id, { radioMode }));
+      this._picked = {
+        ...this._picked,
+        [input.entity]: {
+          label: source.label ?? "Music Assistant",
+          icon: source.icon ?? "mdi:music-box-multiple",
+        },
+      };
+      this._resetPicker();
+    } else if (node.can_expand) {
+      this._browseInto(input, node);
+    }
   }
 
   private async _run(calls: ServiceCall | ServiceCall[] | null): Promise<void> {
@@ -137,8 +235,8 @@ export class BinaryMoipCard extends LitElement {
         <div class="content">
           ${this._renderRail(input)}
           ${input ? this._renderContentSlot(input) : html`<div class="note">No input available</div>`}
-          ${input && input.kind === "stream" && this._showContent
-            ? this._renderContentPicker(input)
+          ${input && input.kind === "stream" && this._pickerOpen
+            ? this._renderSourcePicker(input)
             : nothing}
           ${zoneStates.length ? this._renderMaster(zoneStates) : nothing}
           ${zoneStates.map((z) => this._renderZoneRow(z))}
@@ -158,7 +256,7 @@ export class BinaryMoipCard extends LitElement {
           const active = isSourceActive(src);
           const isStream = input.kind === "stream";
           const headline = isStream
-            ? this._streamContent(input).label
+            ? this._currentSource(input).label
             : input.name;
           const subtitle = isStream ? input.name : "Line-in";
           const icon =
@@ -169,9 +267,8 @@ export class BinaryMoipCard extends LitElement {
               class="tile ${sel ? "selected" : ""}"
               @click=${() => {
                 this._selected = input.entity;
-                this._showContent = false;
                 this._showAddZones = false;
-                this._connectHint = null;
+                this._resetPicker();
               }}
             >
               <div class="tile-top">
@@ -203,20 +300,18 @@ export class BinaryMoipCard extends LitElement {
         </div>
       `;
     }
-    const content = this._streamContent(input);
+    const cur = this._currentSource(input);
+    const sub = isPlaying(src?.state) ? input.name : "Tap Change source";
     return html`
       <div class="content-slot">
-        <ha-icon class="slot-icon" icon=${content.icon}></ha-icon>
+        <ha-icon class="slot-icon" icon=${cur.icon}></ha-icon>
         <div class="meta">
-          <div class="title">${content.label}</div>
-          <div class="artist">${input.name}</div>
+          <div class="title">${cur.label}</div>
+          <div class="artist">${sub}</div>
         </div>
         <button
           class="change-btn"
-          @click=${() => {
-            this._showContent = !this._showContent;
-            this._connectHint = null;
-          }}
+          @click=${() => (this._pickerOpen ? this._resetPicker() : this._openChangeSource())}
         >
           Change source
         </button>
@@ -226,46 +321,113 @@ export class BinaryMoipCard extends LitElement {
     `;
   }
 
-  private _renderContentPicker(input: InputConfig) {
-    const presets = this._config.content ?? [];
-    const cur = currentContentIndex(this._src(input), this._ma(input), presets);
-    return html`
-      <div class="picker">
-        <div class="picker-head">
-          <span>Change source — ${input.name}</span>
-          <button class="icon-btn" @click=${() => (this._showContent = false)}>
-            <ha-icon icon="mdi:check"></ha-icon>
-          </button>
-        </div>
-        ${presets.map((preset, i) => {
-          const connect = isConnectPreset(preset);
-          const icon =
-            preset.icon ?? (connect ? "mdi:spotify" : "mdi:playlist-music");
-          return html`
-            <button
-              class="preset-row ${i === cur ? "selected" : ""}"
-              @click=${() => {
-                if (connect) {
-                  this._connectHint = `Cast from your Spotify app to ${input.name}.`;
-                } else {
-                  this._run(playMediaCall(input.ma_player, preset));
-                  this._showContent = false;
-                }
-              }}
-            >
-              <ha-icon icon=${icon}></ha-icon>
-              <span>${preset.label}</span>
-              ${connect
-                ? html`<span class="on-other">cast from app</span>`
-                : nothing}
-            </button>
-          `;
-        })}
-        ${this._connectHint
-          ? html`<div class="hint">${this._connectHint}</div>`
+  // --- source-first picker: siblings -> (library browse | connect hint) -----
+
+  private _renderSourcePicker(input: InputConfig) {
+    const sources = this._sources;
+    const openIdx = this._openSource;
+    const open = openIdx != null ? sources[openIdx] : undefined;
+
+    // Header: title + (back when drilling) + close.
+    const drilling = open?.type === "library" && this._nav.length > 0;
+    const title =
+      openIdx == null
+        ? `Change source — ${input.name}`
+        : (this._nav.length
+            ? this._nav[this._nav.length - 1].title
+            : open?.label ?? "Source");
+    const header = html`
+      <div class="picker-head">
+        ${openIdx != null
+          ? html`<button class="icon-btn" title="Back" @click=${() =>
+              drilling ? this._navBack(input) : this._selectSourceList()}>
+              <ha-icon icon="mdi:chevron-left"></ha-icon>
+            </button>`
           : nothing}
+        <span class="picker-title">${title}</span>
+        <button class="icon-btn" title="Close" @click=${() => this._resetPicker()}>
+          <ha-icon icon="mdi:close"></ha-icon>
+        </button>
       </div>
     `;
+
+    let body;
+    if (openIdx == null) {
+      // sibling source list
+      body = sources.map(
+        (s, i) => html`
+          <button class="preset-row" @click=${() => this._selectSource(input, i)}>
+            <ha-icon icon=${s.icon ?? (s.type === "connect" ? "mdi:cast" : "mdi:music-box-multiple")}></ha-icon>
+            <span>${s.label ?? (s.type === "connect" ? "Spotify Connect" : "Music Assistant")}</span>
+            ${s.type === "connect"
+              ? html`<span class="on-other">cast</span>`
+              : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
+          </button>
+        `
+      );
+    } else if (open?.type === "connect") {
+      body = html`<div class="hint">${this._connectHint}</div>`;
+    } else if (open?.type === "library") {
+      body = this._renderLibraryBody(input, open);
+    }
+
+    return html`<div class="picker">${header}${body}</div>`;
+  }
+
+  private _selectSourceList(): void {
+    this._openSource = null;
+    this._nav = [];
+    this._children = null;
+    this._connectHint = null;
+  }
+
+  private _renderLibraryBody(input: InputConfig, source: LibrarySource) {
+    if (this._browseLoading) {
+      return html`<div class="hint">Loading…</div>`;
+    }
+    if (this._browseError) {
+      return html`<div class="note">${this._browseError}</div>`;
+    }
+    // Top level of the library source = the configured categories.
+    if (this._nav.length === 0) {
+      const cats = source.categories ?? ["playlists", "radio"];
+      return cats.map(
+        (cat) => html`
+          <button
+            class="preset-row"
+            @click=${() =>
+              this._browseInto(input, {
+                title: categoryLabel(cat),
+                media_content_id: cat,
+                media_content_type: "music_assistant",
+                can_expand: true,
+              })}
+          >
+            <ha-icon icon=${categoryIcon(cat)}></ha-icon>
+            <span>${categoryLabel(cat)}</span>
+            <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+          </button>
+        `
+      );
+    }
+    // Drilled into a category/folder: list its children.
+    const children = this._children ?? [];
+    if (!children.length) {
+      return html`<div class="hint">Nothing here.</div>`;
+    }
+    return children.map(
+      (node) => html`
+        <button class="preset-row" @click=${() => this._onItem(input, node, source)}>
+          ${node.thumbnail
+            ? html`<img class="thumb" src=${node.thumbnail} alt="" />`
+            : html`<ha-icon icon=${node.can_play ? "mdi:play-circle-outline" : "mdi:folder-outline"}></ha-icon>`}
+          <span>${node.title}</span>
+          ${node.can_play
+            ? nothing
+            : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
+        </button>
+      `
+    );
   }
 
   // --- now-playing + transport (reused from v1) -----------------------------
@@ -503,8 +665,12 @@ export class BinaryMoipCard extends LitElement {
     }
     .picker { border-top: 1px solid var(--divider-color); padding-top: 8px; }
     .picker-head {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; gap: 6px;
       font-weight: 500; color: var(--primary-text-color);
+    }
+    .picker-title {
+      flex: 1 1 auto; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .picker-group {
       margin-top: 8px; font-size: 0.8rem; text-transform: uppercase;
@@ -516,7 +682,11 @@ export class BinaryMoipCard extends LitElement {
       background: none; border: none; width: 100%; text-align: left;
       font-size: 1rem;
     }
+    .preset-row span { flex: 1 1 auto; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .preset-row.selected { color: var(--primary-color); }
+    .preset-row .chev { color: var(--secondary-text-color); flex: 0 0 auto; }
+    .thumb { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
     .on-other {
       margin-left: auto; font-size: 0.8rem; color: var(--secondary-text-color);
     }

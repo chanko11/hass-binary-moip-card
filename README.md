@@ -43,12 +43,19 @@ and content preset comes from card config, nothing is hardcoded to a house.
 
 All state is read live from Home Assistant.
 
-## Content swaps
+## Change source (source-first picker)
 
-Selecting an MA-playable preset calls `music_assistant.play_media` on that
-stream's `ma_player` (`enqueue: replace`, `radio_mode` when set). **Spotify
-Connect** can't be started from HA — that entry just shows
-"Cast from your Spotify app to {stream}"; now-playing fills in once you cast.
+**Change source** opens a list of sibling **sources**. By default:
+- **Music Assistant** → drills (via `browse_media` on the stream's `ma_player`)
+  into the MA **library** categories (Playlists, Radio) → pick an item →
+  `music_assistant.play_media` on that player (`enqueue: replace`, `radio_mode`
+  for Radio). Routing is untouched, so the zones keep playing the new content.
+- **Spotify Connect** → no browse; shows "Cast from your Spotify app to
+  {stream}." Now-playing fills in once you cast.
+
+Everything is HA-native (`browse_media` + `play_media`) — works remotely and
+stays stable across MA versions. (MA's per-account provider folders aren't
+exposed to HA; see the spec for the rationale.)
 
 ## Configuration
 
@@ -56,17 +63,19 @@ Connect** can't be started from HA — that entry just shows
 |---------------|----------|-------------|
 | `type`        | yes      | `custom:binary-moip-card` |
 | `inputs`      | yes      | Ordered inputs (below). |
-| `content`     | no       | Content presets shown in the stream picker (shared across streams). |
+| `sources`     | no       | The stream picker's sibling sources. Defaults to Music Assistant + Spotify Connect. |
 | `zone_groups` | no       | Label → MoIP zone entity_ids, for the Add-zones picker (else grouped by HA area). |
 | `title`       | no       | Optional card header. |
 
 **`inputs[]`** — `entity` (binary_moip source: routing + transport), `name`,
 `kind` (`stream` \| `physical`), and for streams `ma_player` (the Music Assistant
-player to target for content swaps). Optional `icon`.
+player to browse + play on). Optional `icon`.
 
-**`content[]`** — each is either an MA preset
-`{ label, icon?, media_id, media_type?, radio_mode? }` or the informational
-`{ label, icon?, type: connect }` Spotify-Connect entry.
+**`sources[]`** (optional; omit to use the defaults) — each is either:
+- `{ type: library, label?, icon?, categories? }` — browse MA's library;
+  `categories` defaults to `[playlists, radio]` (also `artists`, `albums`,
+  `tracks`, …).
+- `{ type: connect, label?, icon? }` — a cast-only entry (e.g. Spotify Connect).
 
 ### Example
 
@@ -76,10 +85,7 @@ inputs:
   - { entity: media_player.ha_streaming_1, name: Streaming 1, kind: stream, ma_player: media_player.streaming_1 }
   - { entity: media_player.ha_streaming_2, name: Streaming 2, kind: stream, ma_player: media_player.streaming_2 }
   - { entity: media_player.record_player,  name: Record player, kind: physical }
-content:
-  - { label: Spotify Connect, icon: mdi:spotify, type: connect }
-  - { label: Yacht Rock, icon: mdi:playlist-music, media_id: "library://playlist/...", media_type: playlist }
-  - { label: KUTX 98.9, icon: mdi:radio-tower, media_id: "http://.../stream", media_type: radio, radio_mode: true }
+# sources: omitted -> defaults to Music Assistant (library) + Spotify Connect
 zone_groups:
   Main House: [media_player.kitchen, media_player.parlor, media_player.dining_room]
   Outdoor:    [media_player.pool, media_player.outdoor_seating]

@@ -3,32 +3,25 @@ import { test } from "node:test";
 
 import {
   averageVolumePct,
-  currentContentIndex,
-  currentPresetIndex,
+  browseMsg,
+  DEFAULT_SOURCES,
   discoverZoneIds,
   groupZones,
-  isConnectPreset,
+  isConnectSource,
   isSourceActive,
   joinCall,
   masterDeltaCalls,
   muteCall,
   pct,
-  playMediaCall,
-  providerFromContentId,
+  playItemCall,
   sessionZoneIds,
   sourceHasTransport,
-  streamHeadline,
   transportCall,
   unjoinCall,
   volumeSetCall,
   zoneToSourceMap,
 } from "../src/logic.ts";
-import {
-  ContentPreset,
-  HassEntity,
-  HomeAssistant,
-  MediaPlayerFeature,
-} from "../src/types.ts";
+import { HassEntity, HomeAssistant, MediaPlayerFeature } from "../src/types.ts";
 
 function ent(
   entity_id: string,
@@ -41,7 +34,7 @@ function ent(
 function hassWith(...entities: HassEntity[]): HomeAssistant {
   const states: Record<string, HassEntity> = {};
   for (const e of entities) states[e.entity_id] = e;
-  return { states, callService: async () => undefined };
+  return { states, callService: async () => undefined, callWS: (async () => undefined) as HomeAssistant["callWS"] };
 }
 
 // --- pct ---------------------------------------------------------------------
@@ -203,6 +196,7 @@ test("discoverZoneIds falls back to binary_moip platform minus sources", () => {
       "media_player.cast": { entity_id: "media_player.cast", platform: "cast" },
     },
     callService: async () => undefined,
+    callWS: (async () => undefined) as HomeAssistant["callWS"],
   };
   const ids = discoverZoneIds(hass, { type: "x", sources: ["media_player.src1"] });
   assert.deepEqual(ids, ["media_player.zone1"]); // src excluded, non-moip excluded
@@ -234,6 +228,7 @@ test("groupZones falls back to area name, then 'Zones'", () => {
     },
     areas: { kitchen: { area_id: "kitchen", name: "Kitchen" } },
     callService: async () => undefined,
+    callWS: (async () => undefined) as HomeAssistant["callWS"],
   };
   const groups = groupZones(hass, { type: "x", sources: [] }, ["media_player.a", "media_player.b"]);
   assert.deepEqual(groups, [
@@ -242,128 +237,50 @@ test("groupZones falls back to area name, then 'Zones'", () => {
   ]);
 });
 
-// --- v2: content swap (preset -> music_assistant.play_media) ------------------
+// --- v2.2: browse -> play (item URI -> music_assistant.play_media) ------------
 
-test("playMediaCall builds a music_assistant.play_media for an MA preset", () => {
-  const preset: ContentPreset = {
-    label: "Yacht Rock",
-    media_id: "library://playlist/123",
-    media_type: "playlist",
-  };
-  assert.deepEqual(playMediaCall("media_player.streaming_1", preset), {
-    domain: "music_assistant",
-    service: "play_media",
-    data: {
-      entity_id: "media_player.streaming_1",
-      media_id: "library://playlist/123",
-      enqueue: "replace",
-      media_type: "playlist",
-    },
+test("playItemCall plays a browsed item's URI on the stream's MA player", () => {
+  assert.deepEqual(
+    playItemCall("media_player.streaming_1", "library://playlist/17"),
+    {
+      domain: "music_assistant",
+      service: "play_media",
+      data: {
+        entity_id: "media_player.streaming_1",
+        media_id: "library://playlist/17",
+        enqueue: "replace",
+      },
+    }
+  );
+});
+
+test("playItemCall adds radio_mode / media_type only when given", () => {
+  const r = playItemCall("media_player.s", "library://radio/3", { radioMode: true });
+  assert.equal(r.data.radio_mode, true);
+  const m = playItemCall("media_player.s", "x", { mediaType: "playlist" });
+  assert.equal(m.data.media_type, "playlist");
+  const plain = playItemCall("media_player.s", "x");
+  assert.equal("radio_mode" in plain.data, false);
+  assert.equal("media_type" in plain.data, false);
+});
+
+test("default sources = Music Assistant (library) + Spotify Connect (cast)", () => {
+  assert.equal(DEFAULT_SOURCES.length, 2);
+  assert.equal(DEFAULT_SOURCES[0].type, "library");
+  assert.equal(DEFAULT_SOURCES[0].label, "Music Assistant");
+  assert.equal(isConnectSource(DEFAULT_SOURCES[1]), true);
+  assert.equal(isConnectSource(DEFAULT_SOURCES[0]), false);
+});
+
+test("browseMsg targets the MA player; root has no content id", () => {
+  assert.deepEqual(browseMsg("media_player.streaming_1"), {
+    type: "media_player/browse_media",
+    entity_id: "media_player.streaming_1",
   });
-});
-
-test("playMediaCall includes radio_mode only when set", () => {
-  const radio: ContentPreset = {
-    label: "KUTX",
-    media_id: "http://stream",
-    media_type: "radio",
-    radio_mode: true,
-  };
-  assert.equal(playMediaCall("media_player.streaming_2", radio)!.data.radio_mode, true);
-
-  const plain: ContentPreset = { label: "P", media_id: "x" };
-  assert.equal("radio_mode" in playMediaCall("media_player.s", plain)!.data, false);
-  assert.equal("media_type" in playMediaCall("media_player.s", plain)!.data, false);
-});
-
-test("playMediaCall is a no-op (null) for the Spotify-Connect entry", () => {
-  const connect: ContentPreset = { label: "Spotify Connect", type: "connect" };
-  assert.equal(playMediaCall("media_player.streaming_1", connect), null);
-  assert.equal(isConnectPreset(connect), true);
-});
-
-test("playMediaCall is a no-op when the stream has no MA player", () => {
-  const preset: ContentPreset = { label: "P", media_id: "x" };
-  assert.equal(playMediaCall(undefined, preset), null);
-});
-
-test("currentPresetIndex matches the playing content by media_content_id", () => {
-  const presets: ContentPreset[] = [
-    { label: "Spotify Connect", type: "connect" },
-    { label: "Yacht Rock", media_id: "library://playlist/123" },
-    { label: "KUTX", media_id: "http://stream" },
-  ];
-  const ma = ent("media_player.streaming_1", "playing", {
-    media_content_id: "library://playlist/123",
+  assert.deepEqual(browseMsg("media_player.streaming_1", "playlists", "music_assistant"), {
+    type: "media_player/browse_media",
+    entity_id: "media_player.streaming_1",
+    media_content_id: "playlists",
+    media_content_type: "music_assistant",
   });
-  assert.equal(currentPresetIndex(ma, presets), 1);
-  // nothing playing / unknown id -> -1
-  assert.equal(currentPresetIndex(ent("media_player.s", "idle", {}), presets), -1);
-  assert.equal(currentPresetIndex(undefined, presets), -1);
-});
-
-// --- v2: content-slot headline (source, never the track) ---------------------
-
-test("providerFromContentId reads the MA scheme", () => {
-  assert.equal(providerFromContentId("spotify--e5JxWKtm://track/abc"), "spotify");
-  assert.equal(providerFromContentId("library://playlist/15"), "library");
-  assert.equal(providerFromContentId("http://stream.example/x"), "http");
-  assert.equal(providerFromContentId(undefined), null);
-  assert.equal(providerFromContentId("not-a-uri"), null);
-});
-
-test("currentContentIndex matches a preset, else points to Connect for Spotify", () => {
-  const presets: ContentPreset[] = [
-    { label: "Spotify Connect", type: "connect" },
-    { label: "KUTX", media_id: "http://stream" },
-  ];
-  const playing = (_cid: string) =>
-    ent("media_player.ha_streaming_1", "playing", {}); // source row
-  const ma = (cid: string) => ent("media_player.streaming_1", "playing", { media_content_id: cid });
-
-  // radio preset playing -> its index
-  assert.equal(currentContentIndex(playing("x"), ma("http://stream/now"), presets), 1);
-  // spotify track (no media match) -> the Connect entry (index 0)
-  assert.equal(
-    currentContentIndex(playing("x"), ma("spotify--ab://track/9"), presets),
-    0
-  );
-  // idle source -> -1 regardless of MA
-  assert.equal(
-    currentContentIndex(ent("media_player.ha_streaming_1", "idle", {}), ma("spotify--ab://track/9"), presets),
-    -1
-  );
-  // spotify but no Connect entry configured -> -1
-  assert.equal(
-    currentContentIndex(playing("x"), ma("spotify--ab://track/9"), [{ label: "KUTX", media_id: "http://stream" }]),
-    -1
-  );
-});
-
-test("streamHeadline shows the source, never the track title", () => {
-  const presets: ContentPreset[] = [
-    { label: "Spotify Connect", type: "connect" },
-    { label: "KUTX 98.9", icon: "mdi:radio-tower", media_id: "http://stream" },
-  ];
-  const src = (state: string) => ent("media_player.ha_streaming_1", state, {});
-  const ma = (attrs: Record<string, unknown>) => ent("media_player.streaming_1", "playing", attrs);
-
-  // idle
-  assert.deepEqual(streamHeadline(src("idle"), ma({}), presets), { label: "Idle", icon: "mdi:music" });
-  // a Spotify session playing a track -> "Spotify Connect" (NOT "Backwater")
-  assert.equal(
-    streamHeadline(src("playing"), ma({ media_content_id: "spotify--ab://track/9", media_title: "Backwater" }), presets).label,
-    "Spotify Connect"
-  );
-  // a radio preset -> its label
-  assert.equal(
-    streamHeadline(src("playing"), ma({ media_content_id: "http://stream/now", media_title: "Some show" }), presets).label,
-    "KUTX 98.9"
-  );
-  // spotify with no Connect preset configured -> still "Spotify Connect", never the track
-  assert.equal(
-    streamHeadline(src("playing"), ma({ media_content_id: "spotify--ab://track/9", media_title: "Backwater" }), [])
-      .label,
-    "Spotify Connect"
-  );
 });

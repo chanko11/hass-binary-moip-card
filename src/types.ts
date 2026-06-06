@@ -50,6 +50,21 @@ export interface HomeAssistant {
     service: string,
     data?: Record<string, unknown>
   ): Promise<unknown>;
+  /** Websocket call — used for media_player/browse_media. */
+  callWS<T = unknown>(msg: Record<string, unknown>): Promise<T>;
+}
+
+/** A node from media_player/browse_media (subset we use). */
+export interface BrowseNode {
+  title: string;
+  media_content_id: string;
+  media_content_type: string;
+  can_play?: boolean;
+  can_expand?: boolean;
+  thumbnail?: string | null;
+  media_class?: string | null;
+  children_media_class?: string | null;
+  children?: BrowseNode[];
 }
 
 /** Shared shape the zone helpers need: a zone-grouping map and the set of
@@ -79,31 +94,34 @@ export interface InputConfig {
   icon?: string;
 }
 
-/** An MA-playable content preset (Pandora/radio/playlist/favorite). */
-export interface MaContentPreset {
-  label: string;
+// Stream "sources" — the siblings in the Change-source picker. Structured so
+// more siblings (per-account sources) can be added later with no refactor.
+
+/** Browse Music Assistant's library via browse_media (Playlists, Radio, …). */
+export interface LibrarySource {
+  type: "library";
+  label?: string;
   icon?: string;
-  media_id: string;
-  media_type?: string;
-  radio_mode?: boolean;
-  type?: undefined;
+  /** Library categories to show as the source's top level (default playlists+radio). */
+  categories?: string[];
 }
 
-/** The informational Spotify-Connect entry — no HA action (cast from the app). */
-export interface ConnectPreset {
-  label: string;
-  icon?: string;
+/** A cast-only source (e.g. Spotify Connect) — no browse, shows an instruction. */
+export interface ConnectSource {
   type: "connect";
+  label?: string;
+  icon?: string;
 }
 
-export type ContentPreset = MaContentPreset | ConnectPreset;
+export type StreamSource = LibrarySource | ConnectSource;
 
 export interface CardConfig {
   type: string;
   /** Ordered inputs: the streams + physical line-ins. */
   inputs: InputConfig[];
-  /** Content presets offered in the stream picker (shared across streams). */
-  content?: ContentPreset[];
+  /** The stream picker's sibling sources. Defaults to Music Assistant + Spotify
+   *  Connect (see DEFAULT_SOURCES). */
+  sources?: StreamSource[];
   /** Optional label -> MoIP zone entity_ids, for the Add-zones picker. */
   zone_groups?: Record<string, string[]>;
   title?: string;

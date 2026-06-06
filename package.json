@@ -1,6 +1,6 @@
 {
   "name": "binary-moip-card",
-  "version": "2.0.1",
+  "version": "2.2.0",
   "description": "Streaming-as-parent whole-home audio Lovelace card for the Binary MoIP integration",
   "license": "MIT",
   "type": "module",

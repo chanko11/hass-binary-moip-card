@@ -3,11 +3,11 @@
 // DOM or Lit. The card component is a thin rendering layer over these.
 
 import {
-  ContentPreset,
   HassEntity,
   HomeAssistant,
   MediaPlayerFeature,
   ServiceCall,
+  StreamSource,
   ZoneSourceConfig,
 } from "./types";
 
@@ -211,118 +211,76 @@ export function groupZones(
     .map(([label, zones]) => ({ label, zones }));
 }
 
-// --- v2: content swap (streams only) ----------------------------------------
+// --- v2.2: source-first picker (HA-native browse_media + play_media) ---------
 
-/** Whether a preset is the informational Spotify-Connect entry (no HA action). */
-export function isConnectPreset(p: ContentPreset): boolean {
-  return (p as { type?: string }).type === "connect";
-}
+/** media_player states we treat as "has something on it" (vs idle). */
+export const PLAYING_STATES = new Set(["playing", "paused", "buffering", "on"]);
+
+export const isPlaying = (state: string | undefined): boolean =>
+  !!state && PLAYING_STATES.has(state);
+
+/** The default stream sources: the MA library + the Spotify-Connect sibling. */
+export const DEFAULT_SOURCES: StreamSource[] = [
+  {
+    type: "library",
+    label: "Music Assistant",
+    icon: "mdi:music-box-multiple",
+    categories: ["playlists", "radio"],
+  },
+  { type: "connect", label: "Spotify Connect", icon: "mdi:spotify" },
+];
+
+export const isConnectSource = (s: StreamSource): boolean => s.type === "connect";
+
+/** Presentation for MA library categories (the level under a library source). */
+export const CATEGORY_META: Record<string, { label: string; icon: string }> = {
+  playlists: { label: "Playlists", icon: "mdi:playlist-music" },
+  radio: { label: "Radio", icon: "mdi:radio" },
+  artists: { label: "Artists", icon: "mdi:account-music" },
+  albums: { label: "Albums", icon: "mdi:album" },
+  tracks: { label: "Tracks", icon: "mdi:music-note" },
+  podcasts: { label: "Podcasts", icon: "mdi:podcast" },
+  audiobooks: { label: "Audiobooks", icon: "mdi:book-music" },
+};
+
+export const categoryLabel = (id: string): string =>
+  CATEGORY_META[id]?.label ?? id;
+export const categoryIcon = (id: string): string =>
+  CATEGORY_META[id]?.icon ?? "mdi:folder-music";
 
 /**
- * Build the content-swap action for a stream: play the chosen preset on that
- * stream's backing Music Assistant player. Routing is untouched (it lives on
- * the binary_moip source), so the already-routed zones keep playing the new
- * content. Returns null for the Spotify-Connect entry (you cast from the app —
- * there is no HA action) and when no MA player is configured for the stream.
+ * The browse→play action: play a browsed item's URI on the stream's MA player.
+ * Routing is untouched (it lives on the binary_moip source), so the already-
+ * routed zones keep playing the new content. `radioMode` for station-like items.
  */
-export function playMediaCall(
-  maPlayer: string | undefined,
-  preset: ContentPreset
-): ServiceCall | null {
-  if (isConnectPreset(preset) || !maPlayer) return null;
-  const p = preset as Exclude<ContentPreset, { type: "connect" }>;
+export function playItemCall(
+  maPlayer: string,
+  uri: string,
+  opts: { radioMode?: boolean; mediaType?: string } = {}
+): ServiceCall {
   const data: Record<string, unknown> = {
     entity_id: maPlayer,
-    media_id: p.media_id,
+    media_id: uri,
     enqueue: "replace",
   };
-  if (p.media_type) data.media_type = p.media_type;
-  if (p.radio_mode) data.radio_mode = true;
+  if (opts.mediaType) data.media_type = opts.mediaType;
+  if (opts.radioMode) data.radio_mode = true;
   return { domain: "music_assistant", service: "play_media", data };
 }
 
-/**
- * Best-effort index of the preset currently playing on a stream's MA player,
- * matched by media_content_id; -1 if none/unknown. Used to highlight the
- * current content in the picker and as the tile headline.
- */
-export function currentPresetIndex(
-  maState: HassEntity | undefined,
-  presets: ContentPreset[]
-): number {
-  const cid = maState?.attributes.media_content_id;
-  if (!cid || typeof cid !== "string") return -1;
-  return presets.findIndex((p) => {
-    if (isConnectPreset(p)) return false;
-    const id = (p as { media_id?: string }).media_id;
-    return !!id && (cid === id || cid.includes(id) || id.includes(cid));
-  });
-}
-
-/** media_player states we treat as "has content on it". */
-export const PLAYING_STATES = new Set(["playing", "paused", "buffering", "on"]);
-
-/**
- * Streaming provider from a Music Assistant media_content_id, e.g.
- * "spotify--e5JxWKtm://track/…" -> "spotify", "http://…" -> "http". Null if none.
- * (MA's only reliable signal for the service — there's no app_name/caster field.)
- */
-export function providerFromContentId(cid: string | undefined): string | null {
-  if (!cid || typeof cid !== "string" || !cid.includes("://")) return null;
-  const scheme = cid.slice(0, cid.indexOf("://"));
-  return scheme.split("--")[0].toLowerCase() || null;
-}
-
-/**
- * Index of the content currently feeding a stream — for the content-slot header
- * AND the picker's "current" highlight. Matches a preset by media_id; for a
- * Spotify session with no media match (a Connect cast, or a Spotify playlist
- * whose media_content_id is the playing track), points at the Spotify-Connect
- * entry. -1 when idle/unknown.
- */
-export function currentContentIndex(
-  srcState: HassEntity | undefined,
-  maState: HassEntity | undefined,
-  presets: ContentPreset[]
-): number {
-  if (!srcState || !PLAYING_STATES.has(srcState.state)) return -1;
-  const i = currentPresetIndex(maState, presets);
-  if (i >= 0) return i;
-  if (providerFromContentId(maState?.attributes.media_content_id) === "spotify") {
-    const j = presets.findIndex(isConnectPreset);
-    if (j >= 0) return j;
+/** browse_media websocket message for a stream's MA player. */
+export function browseMsg(
+  maPlayer: string,
+  mediaContentId?: string,
+  mediaContentType?: string
+): Record<string, unknown> {
+  const msg: Record<string, unknown> = {
+    type: "media_player/browse_media",
+    entity_id: maPlayer,
+  };
+  if (mediaContentId !== undefined) {
+    msg.media_content_id = mediaContentId;
+    msg.media_content_type = mediaContentType;
   }
-  return -1;
-}
-
-/**
- * The content-slot headline for a stream — the SOURCE, never the track:
- * "Idle" when stopped, the matched preset's label, "Spotify Connect" for a
- * Spotify session, a provider-derived label otherwise.
- */
-export function streamHeadline(
-  srcState: HassEntity | undefined,
-  maState: HassEntity | undefined,
-  presets: ContentPreset[]
-): { label: string; icon: string } {
-  const DEFAULT_ICON = "mdi:music";
-  if (!srcState || !PLAYING_STATES.has(srcState.state)) {
-    return { label: "Idle", icon: DEFAULT_ICON };
-  }
-  const idx = currentContentIndex(srcState, maState, presets);
-  if (idx >= 0) {
-    const p = presets[idx];
-    const icon =
-      p.icon ?? (isConnectPreset(p) ? "mdi:spotify" : DEFAULT_ICON);
-    return { label: p.label, icon };
-  }
-  const prov = providerFromContentId(maState?.attributes.media_content_id);
-  if (prov === "spotify") return { label: "Spotify Connect", icon: "mdi:spotify" };
-  if (prov && ["http", "https", "tunein", "radiobrowser", "icyx"].includes(prov)) {
-    return { label: "Radio", icon: "mdi:radio" };
-  }
-  if (prov && prov !== "library") {
-    return { label: prov[0].toUpperCase() + prov.slice(1), icon: DEFAULT_ICON };
-  }
-  return { label: "Playing", icon: DEFAULT_ICON };
+  return msg;
 }
