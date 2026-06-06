@@ -1,0 +1,21 @@
+{
+  "name": "binary-moip-source-card",
+  "version": "0.1.0",
+  "description": "Source-first session Lovelace card for the Binary MoIP integration",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "lit": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.20",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
