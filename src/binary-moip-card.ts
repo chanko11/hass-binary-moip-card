@@ -10,7 +10,7 @@ import {
 } from "./types";
 import {
   averageVolumePct,
-  currentPresetIndex,
+  currentContentIndex,
   discoverZoneIds,
   friendlyName,
   groupZones,
@@ -23,13 +23,14 @@ import {
   playMediaCall,
   sessionZoneIds,
   sourceHasTransport,
+  streamHeadline,
   transportCall,
   unjoinCall,
   volumeSetCall,
   zoneToSourceMap,
 } from "./logic";
 
-const VERSION = "2.0.0";
+const VERSION = "2.0.1";
 /* eslint-disable no-console */
 console.info(
   `%c binary-moip-card %c ${VERSION} `,
@@ -46,8 +47,6 @@ console.info(
       "Streaming-as-parent whole-home audio: pick an input, swap its content, control its zones.",
   },
 ];
-
-const PLAYING = new Set(["playing", "paused", "buffering", "on"]);
 
 @customElement("binary-moip-card")
 export class BinaryMoipCard extends LitElement {
@@ -104,22 +103,14 @@ export class BinaryMoipCard extends LitElement {
     };
   }
 
-  /** Headline for a stream tile/slot: current content label, else track, else Idle. */
+  /** Headline for a stream tile/slot: the SOURCE (preset / Spotify Connect /
+   *  provider), never the track — Idle when stopped. */
   private _streamContent(input: InputConfig): { label: string; icon: string } {
-    const src = this._src(input);
-    const presets = this._config.content ?? [];
-    if (!src || !PLAYING.has(src.state)) {
-      return { label: "Idle", icon: input.icon ?? "mdi:music" };
-    }
-    const idx = currentPresetIndex(this._ma(input), presets);
-    if (idx >= 0) {
-      const p = presets[idx];
-      return { label: p.label, icon: p.icon ?? input.icon ?? "mdi:music" };
-    }
-    return {
-      label: src.attributes.media_title || "Playing",
-      icon: input.icon ?? "mdi:music",
-    };
+    return streamHeadline(
+      this._src(input),
+      this._ma(input),
+      this._config.content ?? []
+    );
   }
 
   private async _run(calls: ServiceCall | ServiceCall[] | null): Promise<void> {
@@ -237,7 +228,7 @@ export class BinaryMoipCard extends LitElement {
 
   private _renderContentPicker(input: InputConfig) {
     const presets = this._config.content ?? [];
-    const cur = currentPresetIndex(this._ma(input), presets);
+    const cur = currentContentIndex(this._src(input), this._ma(input), presets);
     return html`
       <div class="picker">
         <div class="picker-head">

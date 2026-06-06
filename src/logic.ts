@@ -258,3 +258,71 @@ export function currentPresetIndex(
     return !!id && (cid === id || cid.includes(id) || id.includes(cid));
   });
 }
+
+/** media_player states we treat as "has content on it". */
+export const PLAYING_STATES = new Set(["playing", "paused", "buffering", "on"]);
+
+/**
+ * Streaming provider from a Music Assistant media_content_id, e.g.
+ * "spotify--e5JxWKtm://track/…" -> "spotify", "http://…" -> "http". Null if none.
+ * (MA's only reliable signal for the service — there's no app_name/caster field.)
+ */
+export function providerFromContentId(cid: string | undefined): string | null {
+  if (!cid || typeof cid !== "string" || !cid.includes("://")) return null;
+  const scheme = cid.slice(0, cid.indexOf("://"));
+  return scheme.split("--")[0].toLowerCase() || null;
+}
+
+/**
+ * Index of the content currently feeding a stream — for the content-slot header
+ * AND the picker's "current" highlight. Matches a preset by media_id; for a
+ * Spotify session with no media match (a Connect cast, or a Spotify playlist
+ * whose media_content_id is the playing track), points at the Spotify-Connect
+ * entry. -1 when idle/unknown.
+ */
+export function currentContentIndex(
+  srcState: HassEntity | undefined,
+  maState: HassEntity | undefined,
+  presets: ContentPreset[]
+): number {
+  if (!srcState || !PLAYING_STATES.has(srcState.state)) return -1;
+  const i = currentPresetIndex(maState, presets);
+  if (i >= 0) return i;
+  if (providerFromContentId(maState?.attributes.media_content_id) === "spotify") {
+    const j = presets.findIndex(isConnectPreset);
+    if (j >= 0) return j;
+  }
+  return -1;
+}
+
+/**
+ * The content-slot headline for a stream — the SOURCE, never the track:
+ * "Idle" when stopped, the matched preset's label, "Spotify Connect" for a
+ * Spotify session, a provider-derived label otherwise.
+ */
+export function streamHeadline(
+  srcState: HassEntity | undefined,
+  maState: HassEntity | undefined,
+  presets: ContentPreset[]
+): { label: string; icon: string } {
+  const DEFAULT_ICON = "mdi:music";
+  if (!srcState || !PLAYING_STATES.has(srcState.state)) {
+    return { label: "Idle", icon: DEFAULT_ICON };
+  }
+  const idx = currentContentIndex(srcState, maState, presets);
+  if (idx >= 0) {
+    const p = presets[idx];
+    const icon =
+      p.icon ?? (isConnectPreset(p) ? "mdi:spotify" : DEFAULT_ICON);
+    return { label: p.label, icon };
+  }
+  const prov = providerFromContentId(maState?.attributes.media_content_id);
+  if (prov === "spotify") return { label: "Spotify Connect", icon: "mdi:spotify" };
+  if (prov && ["http", "https", "tunein", "radiobrowser", "icyx"].includes(prov)) {
+    return { label: "Radio", icon: "mdi:radio" };
+  }
+  if (prov && prov !== "library") {
+    return { label: prov[0].toUpperCase() + prov.slice(1), icon: DEFAULT_ICON };
+  }
+  return { label: "Playing", icon: DEFAULT_ICON };
+}
