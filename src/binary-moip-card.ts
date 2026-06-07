@@ -31,6 +31,7 @@ import {
   playItemCall,
   sessionZoneIds,
   sourceHasTransport,
+  zoneInScope,
   transportCall,
   unjoinCall,
   volumeSetCall,
@@ -123,6 +124,8 @@ export class BinaryMoipCard extends LitElement {
     return {
       zone_groups: this._config.zone_groups,
       sources: this._config.inputs.map((i) => i.entity),
+      floors: this._config.floors,
+      areas: this._config.areas,
     };
   }
 
@@ -290,12 +293,15 @@ export class BinaryMoipCard extends LitElement {
     if (memChanged) this._pendingMembers = mem;
   }
 
-  /** Session zone states for an input, with optimistic add/remove applied. */
+  /** Session zone states for an input, with optimistic add/remove applied and
+   *  any configured floor/area scope honored (so a room/floor-specific card only
+   *  manages its own zones, even if the source feeds others). */
   private _memberStates(inputId: string): HassEntity[] {
     const ids = new Set(sessionZoneIds(this.hass.states[inputId]));
     const pend = this._pendingMembers[inputId];
     if (pend) for (const [z, want] of Object.entries(pend)) (want ? ids.add(z) : ids.delete(z));
     return [...ids]
+      .filter((id) => zoneInScope(this.hass, id, this._zoneCfg))
       .map((id) => this.hass.states[id])
       .filter((s): s is HassEntity => !!s)
       .sort((a, b) => friendlyName(this.hass, a.entity_id).localeCompare(friendlyName(this.hass, b.entity_id)));

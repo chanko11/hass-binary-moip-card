@@ -14,6 +14,9 @@ export interface HassEntityAttributes {
   entity_picture?: string;
   media_position?: number;
   media_duration?: number;
+  device_class?: string;
+  /** binary_moip role marker: "zone" (output) or "source" (input). */
+  moip_role?: string;
   [key: string]: unknown;
 }
 
@@ -82,6 +85,10 @@ export interface BrowseNode {
 export interface ZoneSourceConfig {
   zone_groups?: Record<string, string[]>;
   sources?: string[];
+  /** Scope the card to specific HA Floor(s) — name or floor_id (case-insensitive). */
+  floors?: string | string[];
+  /** Scope the card to specific HA Area(s) — name or area_id (case-insensitive). */
+  areas?: string | string[];
   /** Present on full card configs; ignored by the zone helpers. */
   type?: string;
 }
@@ -133,6 +140,12 @@ export interface CardConfig {
   sources?: StreamSource[];
   /** Optional label -> MoIP zone entity_ids, for the Add-zones picker. */
   zone_groups?: Record<string, string[]>;
+  /** Scope the card to specific HA Floor(s) — name or floor_id. Use for a
+   *  floor-specific dashboard so only that floor's zones appear. */
+  floors?: string | string[];
+  /** Scope the card to specific HA Area(s) — name or area_id. Use for a
+   *  room/area-specific dashboard. */
+  areas?: string | string[];
   title?: string;
 }
 

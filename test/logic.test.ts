@@ -19,6 +19,7 @@ import {
   transportCall,
   unjoinCall,
   volumeSetCall,
+  zoneInScope,
   zoneToSourceMap,
 } from "../src/logic.ts";
 import { HassEntity, HomeAssistant, MediaPlayerFeature } from "../src/types.ts";
@@ -204,6 +205,56 @@ test("discoverZoneIds fallback = binary_moip zones (VOLUME_SET) only", () => {
   const ids = discoverZoneIds(hass, { type: "x", sources: [] });
   // input1 excluded (no VOLUME_SET), cast excluded (not binary_moip)
   assert.deepEqual(ids, ["media_player.zone1"]);
+});
+
+test("discoverZoneIds prefers moip_role over the VOLUME_SET heuristic", () => {
+  const F = MediaPlayerFeature;
+  const hass: HomeAssistant = {
+    states: {
+      // role says zone even though it has no VOLUME_SET -> included
+      "media_player.z": ent("media_player.z", "idle", { moip_role: "zone" }),
+      // role says source even though it has VOLUME_SET -> excluded
+      "media_player.s": ent("media_player.s", "idle", { moip_role: "source", supported_features: F.VOLUME_SET }),
+    },
+    entities: {
+      "media_player.z": { entity_id: "media_player.z", platform: "binary_moip" },
+      "media_player.s": { entity_id: "media_player.s", platform: "binary_moip" },
+    },
+    callService: async () => undefined,
+    callWS: (async () => undefined) as HomeAssistant["callWS"],
+  };
+  assert.deepEqual(discoverZoneIds(hass, { type: "x", sources: [] }), ["media_player.z"]);
+});
+
+test("floors/areas scope filters discovery and zoneInScope", () => {
+  const hass: HomeAssistant = {
+    states: {
+      "media_player.kitchen": ent("media_player.kitchen", "idle", { moip_role: "zone" }),
+      "media_player.bedroom": ent("media_player.bedroom", "idle", { moip_role: "zone" }),
+    },
+    entities: {
+      "media_player.kitchen": { entity_id: "media_player.kitchen", platform: "binary_moip", area_id: "kitchen" },
+      "media_player.bedroom": { entity_id: "media_player.bedroom", platform: "binary_moip", area_id: "bed" },
+    },
+    areas: {
+      kitchen: { area_id: "kitchen", name: "Kitchen", floor_id: "main" },
+      bed: { area_id: "bed", name: "Bedroom", floor_id: "up" },
+    },
+    floors: {
+      main: { floor_id: "main", name: "Main", level: 0 },
+      up: { floor_id: "up", name: "Upstairs", level: 1 },
+    },
+    callService: async () => undefined,
+    callWS: (async () => undefined) as HomeAssistant["callWS"],
+  };
+  // scope by floor name (case-insensitive)
+  assert.deepEqual(discoverZoneIds(hass, { type: "x", sources: [], floors: "main" }), ["media_player.kitchen"]);
+  // scope by area name
+  assert.deepEqual(discoverZoneIds(hass, { type: "x", sources: [], areas: ["Bedroom"] }), ["media_player.bedroom"]);
+  // no scope -> both; predicate matches by area_id too
+  assert.equal(zoneInScope(hass, "media_player.kitchen", { sources: [] }), true);
+  assert.equal(zoneInScope(hass, "media_player.kitchen", { sources: [], areas: ["kitchen"] }), true);
+  assert.equal(zoneInScope(hass, "media_player.bedroom", { sources: [], floors: ["Main"] }), false);
 });
 
 test("groupZones honors config order and drops empty groups", () => {

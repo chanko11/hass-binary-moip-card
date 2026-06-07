@@ -64,8 +64,25 @@ exposed to HA; see the spec for the rationale.)
 | `type`        | yes      | `custom:binary-moip-card` |
 | `inputs`      | yes      | Ordered inputs (below). |
 | `sources`     | no       | The stream picker's sibling sources. Defaults to Music Assistant + Spotify Connect. |
-| `zone_groups` | no       | Label → MoIP zone entity_ids, for the Add-zones picker (else grouped by HA area). |
+| `zone_groups` | no       | Label → MoIP zone entity_ids, for the Add-zones picker (else grouped by HA Floor). |
+| `floors`      | no       | Scope the card to one or more HA **Floors** (name or `floor_id`). Floor-specific dashboard. |
+| `areas`       | no       | Scope the card to one or more HA **Areas** (name or `area_id`). Room/area-specific dashboard. |
 | `title`       | no       | Optional card header. |
+
+**Scoping (`floors` / `areas`)** — by default the card manages *all* MoIP zones.
+Set `floors` and/or `areas` to limit it to a room or floor: only those zones
+appear in Add-zones, and only those are shown/controlled even if the source is
+also playing elsewhere (so a room card's "All zones" / turn-off won't touch other
+rooms). Each accepts a single value or a list, matched against the Floor/Area
+**name or id** (case-insensitive). Zones are matched by their HA Area assignment.
+
+```yaml
+# A bedroom-only card
+type: custom:binary-moip-card
+areas: Master Bedroom
+inputs:
+  - { entity: media_player.ha_streaming_1, name: Streaming 1, kind: stream, ma_player: media_player.streaming_1 }
+```
 
 **`inputs[]`** — `entity` (binary_moip source: routing + transport), `name`,
 `kind` (`stream` \| `physical`), and for streams `ma_player` (the Music Assistant

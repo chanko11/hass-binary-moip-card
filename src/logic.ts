@@ -140,37 +140,86 @@ export function zoneToSourceMap(
   return map;
 }
 
-/** The universe of zones for the picker. */
+/** Is this entity a binary_moip ZONE (output)? Prefer the integration's
+ *  explicit `moip_role` (v0.3.1+); fall back to the VOLUME_SET heuristic for
+ *  older integration versions (sources are grouping/transport-only). */
+function isZoneEntity(st: HassEntity): boolean {
+  const role = st.attributes.moip_role;
+  if (role) return role === "zone";
+  return (
+    ((st.attributes.supported_features ?? 0) & MediaPlayerFeature.VOLUME_SET) !== 0
+  );
+}
+
+function toLowerList(v?: string | string[]): string[] {
+  if (!v) return [];
+  return (Array.isArray(v) ? v : [v]).map((s) => s.toLowerCase());
+}
+
+/** Is a zone within the card's configured floor/area scope? True when no scope
+ *  is set. Matches floors/areas by name OR id (case-insensitive). */
+export function zoneInScope(
+  hass: HomeAssistant,
+  entityId: string,
+  config: ZoneSourceConfig
+): boolean {
+  const floors = toLowerList(config.floors);
+  const areas = toLowerList(config.areas);
+  if (!floors.length && !areas.length) return true;
+
+  const aid = areaIdForEntity(hass, entityId);
+  const area = aid ? hass.areas?.[aid] : undefined;
+  const fid = area?.floor_id ?? null;
+  const floor = fid ? hass.floors?.[fid] : undefined;
+
+  if (areas.length) {
+    const ok =
+      (!!aid && areas.includes(aid.toLowerCase())) ||
+      (!!area?.name && areas.includes(area.name.toLowerCase()));
+    if (!ok) return false;
+  }
+  if (floors.length) {
+    const ok =
+      (!!fid && floors.includes(fid.toLowerCase())) ||
+      (!!floor?.name && floors.includes(floor.name.toLowerCase()));
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/** The universe of zones for the picker (honors any floor/area scope). */
 export function discoverZoneIds(
   hass: HomeAssistant,
   config: ZoneSourceConfig
 ): string[] {
+  let ids: string[];
   if (config.zone_groups) {
-    const ids = new Set<string>();
+    const set = new Set<string>();
     for (const list of Object.values(config.zone_groups)) {
-      for (const id of list) ids.add(id);
+      for (const id of list) set.add(id);
     }
-    return [...ids].filter((id) => hass.states[id]);
-  }
-  // Fallback: binary_moip media_players that are ZONES (outputs). The
-  // integration also exposes inputs/sources as media_players; those are
-  // grouping/transport-only and lack VOLUME_SET, so filtering on VOLUME_SET
-  // keeps only the room outputs. (Configured sources are excluded too.)
-  const sources = new Set(config.sources ?? []);
-  const out: string[] = [];
-  for (const [eid, ent] of Object.entries(hass.entities ?? {})) {
-    const st = hass.states[eid];
-    if (
-      eid.startsWith("media_player.") &&
-      ent.platform === "binary_moip" &&
-      !sources.has(eid) &&
-      st &&
-      ((st.attributes.supported_features ?? 0) & MediaPlayerFeature.VOLUME_SET) !== 0
-    ) {
-      out.push(eid);
+    ids = [...set].filter((id) => hass.states[id]);
+  } else {
+    // Every binary_moip media_player that is a ZONE (output). The integration
+    // also exposes inputs/sources as media_players; isZoneEntity() filters them
+    // out (via moip_role, else the VOLUME_SET heuristic). Configured sources
+    // are excluded too.
+    const sources = new Set(config.sources ?? []);
+    ids = [];
+    for (const [eid, ent] of Object.entries(hass.entities ?? {})) {
+      const st = hass.states[eid];
+      if (
+        eid.startsWith("media_player.") &&
+        ent.platform === "binary_moip" &&
+        !sources.has(eid) &&
+        st &&
+        isZoneEntity(st)
+      ) {
+        ids.push(eid);
+      }
     }
   }
-  return out;
+  return ids.filter((id) => zoneInScope(hass, id, config));
 }
 
 function areaIdForEntity(hass: HomeAssistant, entityId: string): string | null {
