@@ -73,6 +73,11 @@ export class BinaryMoipCard extends LitElement {
     string,
     { label: string; icon: string; item?: string }
   > = {};
+  // Optimistic UI — show changes immediately, reconcile when hass catches up.
+  @state() private _pendingVol: Record<string, number> = {}; // entity_id -> pct
+  @state() private _pendingMaster: Record<string, number> = {}; // input -> pct
+  @state() private _pendingMembers: Record<string, Record<string, boolean>> = {}; // input -> zone -> in?
+  @state() private _showSourceVol = false;
 
   public setConfig(config: CardConfig): void {
     if (!config || !Array.isArray(config.inputs) || config.inputs.length === 0) {
@@ -242,13 +247,84 @@ export class BinaryMoipCard extends LitElement {
     );
   }
 
+  // --- optimistic UI helpers ------------------------------------------------
+
+  /** Drop optimistic state once hass reflects it (called after each render). */
+  protected override updated(): void {
+    let vol = this._pendingVol;
+    let changed = false;
+    for (const [id, p] of Object.entries(vol)) {
+      const st = this.hass.states[id];
+      if (st && pct(st.attributes.volume_level) === p) {
+        if (!changed) { vol = { ...vol }; changed = true; }
+        delete vol[id];
+      }
+    }
+    if (changed) this._pendingVol = vol;
+
+    let mast = this._pendingMaster;
+    let mChanged = false;
+    for (const [inputId, p] of Object.entries(mast)) {
+      const zs = this._memberStates(inputId);
+      if (zs.length && averageVolumePct(zs) === p) {
+        if (!mChanged) { mast = { ...mast }; mChanged = true; }
+        delete mast[inputId];
+      }
+    }
+    if (mChanged) this._pendingMaster = mast;
+
+    let mem = this._pendingMembers;
+    let memChanged = false;
+    for (const [inputId, zmap] of Object.entries(mem)) {
+      const actual = new Set(sessionZoneIds(this.hass.states[inputId]));
+      for (const [zid, want] of Object.entries(zmap)) {
+        if (actual.has(zid) === want) {
+          if (!memChanged) { mem = { ...mem }; memChanged = true; }
+          else if (mem[inputId] === zmap) mem[inputId] = { ...zmap };
+          delete mem[inputId][zid];
+          if (!Object.keys(mem[inputId]).length) delete mem[inputId];
+        }
+      }
+    }
+    if (memChanged) this._pendingMembers = mem;
+  }
+
+  /** Session zone states for an input, with optimistic add/remove applied. */
+  private _memberStates(inputId: string): HassEntity[] {
+    const ids = new Set(sessionZoneIds(this.hass.states[inputId]));
+    const pend = this._pendingMembers[inputId];
+    if (pend) for (const [z, want] of Object.entries(pend)) (want ? ids.add(z) : ids.delete(z));
+    return [...ids]
+      .map((id) => this.hass.states[id])
+      .filter((s): s is HassEntity => !!s)
+      .sort((a, b) => friendlyName(this.hass, a.entity_id).localeCompare(friendlyName(this.hass, b.entity_id)));
+  }
+
+  /** Displayed volume % for an entity: optimistic value if pending, else live. */
+  private _volPct(entityId: string): number {
+    return this._pendingVol[entityId] ?? pct(this.hass.states[entityId]?.attributes.volume_level);
+  }
+
+  private _setVol(entityId: string, value: number, commit: boolean): void {
+    this._pendingVol = { ...this._pendingVol, [entityId]: value };
+    if (commit) this._run(volumeSetCall(entityId, value / 100));
+  }
+
+  /** Add (want=true) or remove (want=false) a zone from an input — optimistically. */
+  private _setMember(input: InputConfig, zid: string, want: boolean): void {
+    const cur = this._pendingMembers[input.entity] ?? {};
+    this._pendingMembers = {
+      ...this._pendingMembers,
+      [input.entity]: { ...cur, [zid]: want },
+    };
+    this._run(want ? joinCall(input.entity, zid) : unjoinCall(zid));
+  }
+
   protected override render(): TemplateResult | typeof nothing {
     if (!this.hass || !this._config) return nothing;
     const input = this._selectedInput;
     const src = input ? this._src(input) : undefined;
-    const zoneStates = sessionZoneIds(src)
-      .map((id) => this.hass.states[id])
-      .filter((s): s is HassEntity => !!s);
+    const zoneStates = input ? this._memberStates(input.entity) : [];
 
     return html`
       <ha-card>
@@ -261,11 +337,11 @@ export class BinaryMoipCard extends LitElement {
             ? this._renderStreamCard(input)
             : html`<div class="note">No input available</div>`}
           ${input && zoneStates.length ? this._renderMaster(input, zoneStates) : nothing}
-          ${zoneStates.map((z) => this._renderZoneRow(z))}
+          ${input ? zoneStates.map((z) => this._renderZoneRow(input, z)) : nothing}
           ${input && src && zoneStates.length === 0
             ? html`<div class="note">No zones yet — add one below to hear this.</div>`
             : nothing}
-          ${input && src ? this._renderAddZones(input, src) : nothing}
+          ${input && src ? this._renderAddZones(input) : nothing}
         </div>
       </ha-card>
     `;
@@ -339,10 +415,19 @@ export class BinaryMoipCard extends LitElement {
             <div class="title">${cur.label}</div>
             <div class="artist">${sub}</div>
           </div>
+          ${input.ma_player
+            ? html`<button class="icon-btn" title="Source volume"
+                @click=${() => (this._showSourceVol = !this._showSourceVol)}>
+                <ha-icon icon="mdi:tune-vertical"></ha-icon>
+              </button>`
+            : nothing}
           <button class="change-btn" @click=${() => this._openChangeSource()}>
             Change source
           </button>
         </div>
+        ${input.ma_player && this._showSourceVol
+          ? this._renderSourceVol(input.ma_player)
+          : nothing}
         <div class="sep"></div>
         ${this._renderNowPlaying(src)}
       `;
@@ -497,15 +582,39 @@ export class BinaryMoipCard extends LitElement {
 
   // --- master + zone rows (reused from v1) ----------------------------------
 
+  private _renderSourceVol(maPlayer: string) {
+    const value = this._volPct(maPlayer);
+    return html`
+      <div class="row src-vol">
+        <ha-icon icon="mdi:cast-audio"></ha-icon>
+        <span class="row-name">Source vol</span>
+        <input type="range" min="0" max="100" .value=${String(value)}
+          @input=${(e: Event) => this._setVol(maPlayer, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => this._setVol(maPlayer, Number((e.target as HTMLInputElement).value), true)} />
+        <span class="pct">${value}%</span>
+      </div>
+    `;
+  }
+
   private _renderMaster(input: InputConfig, zoneStates: HassEntity[]) {
-    const value = averageVolumePct(zoneStates);
+    const disp = zoneStates.length
+      ? Math.round(
+          zoneStates.reduce((s, z) => s + this._volPct(z.entity_id), 0) / zoneStates.length
+        )
+      : 0;
+    const value = this._pendingMaster[input.entity] ?? disp;
     return html`
       <div class="row master">
         <ha-icon icon="mdi:speaker-multiple"></ha-icon>
         <span class="row-name">All zones</span>
         <input type="range" min="0" max="100" .value=${String(value)}
+          @input=${(e: Event) =>
+            (this._pendingMaster = {
+              ...this._pendingMaster,
+              [input.entity]: Number((e.target as HTMLInputElement).value),
+            })}
           @change=${(e: Event) =>
-            this._run(masterDeltaCalls(zoneStates, Number((e.target as HTMLInputElement).value)))} />
+            this._commitMaster(input, zoneStates, Number((e.target as HTMLInputElement).value))} />
         <span class="pct">${value}%</span>
         <button class="icon-btn" title="Turn off — remove all zones"
           @click=${() => this._turnOff(input, zoneStates)}>
@@ -515,16 +624,24 @@ export class BinaryMoipCard extends LitElement {
     `;
   }
 
+  private _commitMaster(input: InputConfig, zoneStates: HassEntity[], value: number): void {
+    const calls = masterDeltaCalls(zoneStates, value);
+    const vol = { ...this._pendingVol };
+    for (const c of calls) vol[c.data.entity_id as string] = Math.round((c.data.volume_level as number) * 100);
+    this._pendingVol = vol;
+    this._pendingMaster = { ...this._pendingMaster, [input.entity]: value };
+    this._run(calls);
+  }
+
   /** Turn the whole stream off: drop every zone, and stop it if it has transport. */
   private _turnOff(input: InputConfig, zoneStates: HassEntity[]): void {
+    const pend = { ...(this._pendingMembers[input.entity] ?? {}) };
+    for (const z of zoneStates) pend[z.entity_id] = false;
+    this._pendingMembers = { ...this._pendingMembers, [input.entity]: pend };
     const calls: ServiceCall[] = zoneStates.map((z) => unjoinCall(z.entity_id));
     const src = this._src(input);
     if (src && sourceHasTransport(src)) {
-      calls.push({
-        domain: "media_player",
-        service: "media_stop",
-        data: { entity_id: input.entity },
-      });
+      calls.push({ domain: "media_player", service: "media_stop", data: { entity_id: input.entity } });
     }
     this._run(calls);
     const next = { ...this._picked };
@@ -532,9 +649,9 @@ export class BinaryMoipCard extends LitElement {
     this._picked = next;
   }
 
-  private _renderZoneRow(zone: HassEntity) {
+  private _renderZoneRow(input: InputConfig, zone: HassEntity) {
     const muted = !!zone.attributes.is_volume_muted;
-    const value = pct(zone.attributes.volume_level);
+    const value = this._volPct(zone.entity_id);
     return html`
       <div class="row">
         <button class="icon-btn" title="Mute"
@@ -543,11 +660,11 @@ export class BinaryMoipCard extends LitElement {
         </button>
         <span class="row-name">${friendlyName(this.hass, zone.entity_id)}</span>
         <input type="range" min="0" max="100" .value=${String(value)}
-          @change=${(e: Event) =>
-            this._run(volumeSetCall(zone.entity_id, Number((e.target as HTMLInputElement).value) / 100))} />
+          @input=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), true)} />
         <span class="pct">${value}%</span>
-        <button class="icon-btn" title="Remove from session"
-          @click=${() => this._run(unjoinCall(zone.entity_id))}>
+        <button class="icon-btn" title="Turn off this zone"
+          @click=${() => this._setMember(input, zone.entity_id, false)}>
           <ha-icon icon="mdi:close"></ha-icon>
         </button>
       </div>
@@ -556,7 +673,7 @@ export class BinaryMoipCard extends LitElement {
 
   // --- add zones (reused from v1; joins to the selected input's source) -----
 
-  private _renderAddZones(input: InputConfig, src: HassEntity) {
+  private _renderAddZones(input: InputConfig) {
     if (!this._showAddZones) {
       return html`
         <button class="add-btn" @click=${() => (this._showAddZones = true)}>
@@ -564,19 +681,23 @@ export class BinaryMoipCard extends LitElement {
         </button>
       `;
     }
-    const inSession = new Set(sessionZoneIds(src));
+    const inSession = new Set(this._memberStates(input.entity).map((s) => s.entity_id));
     const onSource = zoneToSourceMap(this.hass, this._zoneCfg.sources);
     const groups = groupZones(this.hass, this._zoneCfg, discoverZoneIds(this.hass, this._zoneCfg));
+    let lastFloor: string | null | undefined = undefined;
     return html`
       <div class="picker">
         <div class="picker-head">
-          <span>Add zones</span>
+          <span class="picker-title">Add zones</span>
           <button class="icon-btn" @click=${() => (this._showAddZones = false)}>
             <ha-icon icon="mdi:check"></ha-icon>
           </button>
         </div>
-        ${groups.map(
-          (g) => html`
+        ${groups.map((g) => {
+          const showFloor = g.floor != null && g.floor !== lastFloor;
+          lastFloor = g.floor;
+          return html`
+            ${showFloor ? html`<div class="picker-floor">${g.floor}</div>` : nothing}
             <div class="picker-group">${g.label}</div>
             ${g.zones.map((zid) => {
               const checked = inSession.has(zid);
@@ -585,8 +706,7 @@ export class BinaryMoipCard extends LitElement {
               return html`
                 <label class="picker-row">
                   <input type="checkbox" .checked=${checked}
-                    @change=${() =>
-                      this._run(checked ? unjoinCall(zid) : joinCall(input.entity, zid))} />
+                    @change=${() => this._setMember(input, zid, !checked)} />
                   <span>${friendlyName(this.hass, zid)}</span>
                   ${elsewhere
                     ? html`<span class="on-other">on ${friendlyName(this.hass, other)}</span>`
@@ -594,8 +714,8 @@ export class BinaryMoipCard extends LitElement {
                 </label>
               `;
             })}
-          `
-        )}
+          `;
+        })}
       </div>
     `;
   }
@@ -714,7 +834,12 @@ export class BinaryMoipCard extends LitElement {
       border-top: 1px solid var(--divider-color);
       padding-top: 12px; font-weight: 500;
     }
-    .row-name { flex: 0 0 auto; min-width: 84px; color: var(--primary-text-color); }
+    /* Fixed width so every slider left-aligns -> relative volume at a glance. */
+    .row-name {
+      flex: 0 0 104px; width: 104px;
+      color: var(--primary-text-color);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     input[type="range"] { flex: 1 1 auto; accent-color: var(--primary-color); }
     .pct {
       flex: 0 0 auto; width: 40px; text-align: right;
@@ -742,6 +867,9 @@ export class BinaryMoipCard extends LitElement {
     .picker-title {
       flex: 1 1 auto; min-width: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .picker-floor {
+      margin-top: 10px; font-weight: 600; color: var(--primary-text-color);
     }
     .picker-group {
       margin-top: 8px; font-size: 0.8rem; text-transform: uppercase;

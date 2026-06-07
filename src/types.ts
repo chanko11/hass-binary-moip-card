@@ -38,6 +38,13 @@ export interface RegistryDevice {
 export interface RegistryArea {
   area_id: string;
   name: string;
+  floor_id?: string | null;
+}
+
+export interface RegistryFloor {
+  floor_id: string;
+  name: string;
+  level?: number | null;
 }
 
 export interface HomeAssistant {
@@ -45,6 +52,7 @@ export interface HomeAssistant {
   entities?: Record<string, RegistryEntity>;
   devices?: Record<string, RegistryDevice>;
   areas?: Record<string, RegistryArea>;
+  floors?: Record<string, RegistryFloor>;
   callService(
     domain: string,
     service: string,

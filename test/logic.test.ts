@@ -219,21 +219,39 @@ test("groupZones honors config order and drops empty groups", () => {
   ]);
 });
 
-test("groupZones falls back to area name, then 'Zones'", () => {
+test("groupZones falls back to floor-first area grouping, then 'Zones'", () => {
   const hass: HomeAssistant = {
-    states: { "media_player.a": ent("media_player.a"), "media_player.b": ent("media_player.b") },
+    states: {
+      "media_player.a": ent("media_player.a"),
+      "media_player.b": ent("media_player.b"),
+      "media_player.c": ent("media_player.c"),
+    },
     entities: {
       "media_player.a": { entity_id: "media_player.a", area_id: "kitchen" },
-      "media_player.b": { entity_id: "media_player.b" }, // no area
+      "media_player.b": { entity_id: "media_player.b", area_id: "bed" },
+      "media_player.c": { entity_id: "media_player.c" }, // no area
     },
-    areas: { kitchen: { area_id: "kitchen", name: "Kitchen" } },
+    areas: {
+      kitchen: { area_id: "kitchen", name: "Kitchen", floor_id: "main" },
+      bed: { area_id: "bed", name: "Bedroom", floor_id: "up" },
+    },
+    floors: {
+      main: { floor_id: "main", name: "Main", level: 0 },
+      up: { floor_id: "up", name: "Upstairs", level: 1 },
+    },
     callService: async () => undefined,
     callWS: (async () => undefined) as HomeAssistant["callWS"],
   };
-  const groups = groupZones(hass, { type: "x", sources: [] }, ["media_player.a", "media_player.b"]);
+  const groups = groupZones(hass, { type: "x", sources: [] }, [
+    "media_player.a",
+    "media_player.b",
+    "media_player.c",
+  ]);
+  // ordered by floor level (Main 0, Upstairs 1), then no-area "Zones" last
   assert.deepEqual(groups, [
-    { label: "Kitchen", zones: ["media_player.a"] },
-    { label: "Zones", zones: ["media_player.b"] },
+    { label: "Kitchen", zones: ["media_player.a"], floor: "Main" },
+    { label: "Bedroom", zones: ["media_player.b"], floor: "Upstairs" },
+    { label: "Zones", zones: ["media_player.c"], floor: null },
   ]);
 });
 

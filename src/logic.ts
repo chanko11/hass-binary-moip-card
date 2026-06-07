@@ -168,26 +168,30 @@ export function discoverZoneIds(
   return out;
 }
 
-function areaNameForEntity(
-  hass: HomeAssistant,
-  entityId: string
-): string | null {
+function areaIdForEntity(hass: HomeAssistant, entityId: string): string | null {
   const ent = hass.entities?.[entityId];
   if (!ent) return null;
   let areaId = ent.area_id ?? null;
   if (!areaId && ent.device_id) {
     areaId = hass.devices?.[ent.device_id]?.area_id ?? null;
   }
-  if (!areaId) return null;
-  return hass.areas?.[areaId]?.name ?? null;
+  return areaId ?? null;
 }
 
 export interface ZoneGroup {
   label: string;
   zones: string[];
+  /** Floor name for the area-based grouping (null = no floor / config groups). */
+  floor?: string | null;
 }
 
-/** Group zones for the Add-zones picker: by config.zone_groups, else by HA area. */
+/**
+ * Group zones for the Add-zones picker.
+ * - With `config.zone_groups`: the explicit, ordered groups (no floor headers).
+ * - Otherwise: by HA **Area**, ordered **floor-first** (floor level, then area
+ *   name); each group carries its floor name so the UI can show floor headings.
+ *   Areas with no floor sort last; zones with no area fall under "Zones".
+ */
 export function groupZones(
   hass: HomeAssistant,
   config: ZoneSourceConfig,
@@ -201,14 +205,43 @@ export function groupZones(
       }))
       .filter((g) => g.zones.length > 0);
   }
-  const groups: Record<string, string[]> = {};
+
+  // area_id -> zones
+  const byArea: Record<string, string[]> = {};
+  const noArea: string[] = [];
   for (const z of zoneIds) {
-    const label = areaNameForEntity(hass, z) ?? "Zones";
-    (groups[label] ??= []).push(z);
+    const aid = areaIdForEntity(hass, z);
+    if (aid) (byArea[aid] ??= []).push(z);
+    else noArea.push(z);
   }
-  return Object.entries(groups)
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([label, zones]) => ({ label, zones }));
+
+  const groups = Object.entries(byArea).map(([aid, zones]) => {
+    const area = hass.areas?.[aid];
+    const floorId = area?.floor_id ?? null;
+    const floor = floorId ? hass.floors?.[floorId] : undefined;
+    return {
+      label: area?.name ?? aid,
+      zones,
+      floor: floor?.name ?? null,
+      _floorLevel: floor?.level ?? null,
+    };
+  });
+
+  // Sort floor-first: by floor level (nulls last), then area name.
+  groups.sort((a, b) => {
+    const al = a._floorLevel ?? Number.POSITIVE_INFINITY;
+    const bl = b._floorLevel ?? Number.POSITIVE_INFINITY;
+    if (al !== bl) return al - bl;
+    return a.label.localeCompare(b.label);
+  });
+
+  const result: ZoneGroup[] = groups.map(({ label, zones, floor }) => ({
+    label,
+    zones,
+    floor,
+  }));
+  if (noArea.length) result.push({ label: "Zones", zones: noArea, floor: null });
+  return result;
 }
 
 // --- v2.2: source-first picker (HA-native browse_media + play_media) ---------
