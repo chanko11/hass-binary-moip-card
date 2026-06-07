@@ -38,7 +38,7 @@ import {
   zoneToSourceMap,
 } from "./logic";
 
-const VERSION = "2.3.0";
+const VERSION = "2.3.1";
 /* eslint-disable no-console */
 console.info(
   `%c binary-moip-card %c ${VERSION} `,
