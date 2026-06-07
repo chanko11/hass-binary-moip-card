@@ -293,18 +293,23 @@ export class BinaryMoipCard extends LitElement {
     if (memChanged) this._pendingMembers = mem;
   }
 
-  /** Session zone states for an input, with optimistic add/remove applied and
-   *  any configured floor/area scope honored (so a room/floor-specific card only
-   *  manages its own zones, even if the source feeds others). */
+  /** Session zone states for an input, with optimistic add/remove applied. Shows
+   *  ALL joined zones (including any outside the card's floor/area scope, so you
+   *  can see everything currently playing). Scope only gates *adding* (the
+   *  Add-zones picker) and which zones are *modifiable* — see _ownedStates. */
   private _memberStates(inputId: string): HassEntity[] {
     const ids = new Set(sessionZoneIds(this.hass.states[inputId]));
     const pend = this._pendingMembers[inputId];
     if (pend) for (const [z, want] of Object.entries(pend)) (want ? ids.add(z) : ids.delete(z));
     return [...ids]
-      .filter((id) => zoneInScope(this.hass, id, this._zoneCfg))
       .map((id) => this.hass.states[id])
       .filter((s): s is HassEntity => !!s)
       .sort((a, b) => friendlyName(this.hass, a.entity_id).localeCompare(friendlyName(this.hass, b.entity_id)));
+  }
+
+  /** Whether a zone is within the card's configured scope (i.e. modifiable). */
+  private _inScope(entityId: string): boolean {
+    return zoneInScope(this.hass, entityId, this._zoneCfg);
   }
 
   /** Displayed volume % for an entity: optimistic value if pending, else live. */
@@ -332,6 +337,9 @@ export class BinaryMoipCard extends LitElement {
     const input = this._selectedInput;
     const src = input ? this._src(input) : undefined;
     const zoneStates = input ? this._memberStates(input.entity) : [];
+    // Zones this card may modify (within its floor/area scope). Out-of-scope
+    // members are still shown, but read-only, and master/turn-off skip them.
+    const owned = zoneStates.filter((z) => this._inScope(z.entity_id));
 
     return html`
       <ha-card>
@@ -343,8 +351,10 @@ export class BinaryMoipCard extends LitElement {
           ${input
             ? this._renderStreamCard(input)
             : html`<div class="note">No input available</div>`}
-          ${input && zoneStates.length ? this._renderMaster(input, zoneStates) : nothing}
-          ${input ? zoneStates.map((z) => this._renderZoneRow(input, z)) : nothing}
+          ${input && owned.length ? this._renderMaster(input, owned) : nothing}
+          ${input
+            ? zoneStates.map((z) => this._renderZoneRow(input, z, !this._inScope(z.entity_id)))
+            : nothing}
           ${input && src && zoneStates.length === 0
             ? html`<div class="note">No zones yet — add one below to hear this.</div>`
             : nothing}
@@ -656,9 +666,21 @@ export class BinaryMoipCard extends LitElement {
     this._picked = next;
   }
 
-  private _renderZoneRow(input: InputConfig, zone: HassEntity) {
+  private _renderZoneRow(input: InputConfig, zone: HassEntity, locked = false) {
     const muted = !!zone.attributes.is_volume_muted;
     const value = this._volPct(zone.entity_id);
+    if (locked) {
+      // Joined to this source but outside the card's scope: show it (so you
+      // know it's playing) but read-only — no volume/mute/remove here.
+      return html`
+        <div class="row locked" title="Outside this card's area — control it from its own card">
+          <ha-icon class="lock" icon="mdi:lock-outline"></ha-icon>
+          <span class="row-name">${friendlyName(this.hass, zone.entity_id)}</span>
+          <input type="range" min="0" max="100" .value=${String(value)} disabled />
+          <span class="pct">${value}%</span>
+        </div>
+      `;
+    }
     return html`
       <div class="row">
         <button class="icon-btn" title="Mute"
@@ -888,6 +910,12 @@ export class BinaryMoipCard extends LitElement {
     .pick-other { font-size: 0.72rem; opacity: 0.85; }
 
     .row { display: flex; align-items: center; gap: 8px; }
+    .row.locked { opacity: 0.55; }
+    /* Match .icon-btn footprint so the slider still left-aligns with other rows. */
+    .row .lock {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 4px; --mdc-icon-size: 22px; color: var(--secondary-text-color);
+    }
     .row.master {
       border-top: 1px solid var(--divider-color);
       padding-top: 12px; font-weight: 500;
