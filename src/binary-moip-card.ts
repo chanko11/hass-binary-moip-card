@@ -338,11 +338,7 @@ export class BinaryMoipCard extends LitElement {
             ? this._renderStreamCard(input)
             : html`<div class="note">No input available</div>`}
           ${input && zoneStates.length ? this._renderMaster(input, zoneStates) : nothing}
-          ${input && zoneStates.length
-            ? html`<div class="zones-grid">
-                ${zoneStates.map((z) => this._renderZoneTile(input, z))}
-              </div>`
-            : nothing}
+          ${input ? zoneStates.map((z) => this._renderZoneRow(input, z)) : nothing}
           ${input && src && zoneStates.length === 0
             ? html`<div class="note">No zones yet — add one below to hear this.</div>`
             : nothing}
@@ -654,34 +650,24 @@ export class BinaryMoipCard extends LitElement {
     this._picked = next;
   }
 
-  private _renderZoneTile(input: InputConfig, zone: HassEntity) {
+  private _renderZoneRow(input: InputConfig, zone: HassEntity) {
     const muted = !!zone.attributes.is_volume_muted;
     const value = this._volPct(zone.entity_id);
-    const pic = areaPictureForEntity(this.hass, zone.entity_id);
     return html`
-      <div
-        class="zone-tile ${pic ? "has-image" : ""}"
-        style=${pic ? `background-image: url("${pic}")` : ""}
-      >
-        <div class="zt-head">
-          <span class="zt-name">${friendlyName(this.hass, zone.entity_id)}</span>
-          <span class="zt-actions">
-            <button class="icon-btn" title="Mute"
-              @click=${() => this._run(muteCall(zone.entity_id, !muted))}>
-              <ha-icon icon=${muted ? "mdi:volume-off" : "mdi:volume-high"}></ha-icon>
-            </button>
-            <button class="icon-btn" title="Turn off this zone"
-              @click=${() => this._setMember(input, zone.entity_id, false)}>
-              <ha-icon icon="mdi:close"></ha-icon>
-            </button>
-          </span>
-        </div>
-        <div class="zt-foot">
-          <input type="range" min="0" max="100" .value=${String(value)}
-            @input=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), false)}
-            @change=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), true)} />
-          <span class="zt-pct">${value}%</span>
-        </div>
+      <div class="row">
+        <button class="icon-btn" title="Mute"
+          @click=${() => this._run(muteCall(zone.entity_id, !muted))}>
+          <ha-icon icon=${muted ? "mdi:volume-off" : "mdi:volume-high"}></ha-icon>
+        </button>
+        <span class="row-name">${friendlyName(this.hass, zone.entity_id)}</span>
+        <input type="range" min="0" max="100" .value=${String(value)}
+          @input=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), true)} />
+        <span class="pct">${value}%</span>
+        <button class="icon-btn" title="Turn off this zone"
+          @click=${() => this._setMember(input, zone.entity_id, false)}>
+          <ha-icon icon="mdi:close"></ha-icon>
+        </button>
       </div>
     `;
   }
@@ -710,21 +696,29 @@ export class BinaryMoipCard extends LitElement {
         ${groups.map(
           (g) => html`
             <div class="picker-group">${g.label}</div>
-            ${g.zones.map((zid) => {
-              const checked = inSession.has(zid);
-              const other = onSource[zid];
-              const elsewhere = other && other !== input.entity;
-              return html`
-                <label class="picker-row">
-                  <input type="checkbox" .checked=${checked}
-                    @change=${() => this._setMember(input, zid, !checked)} />
-                  <span>${friendlyName(this.hass, zid)}</span>
-                  ${elsewhere
-                    ? html`<span class="on-other">on ${friendlyName(this.hass, other)}</span>`
-                    : nothing}
-                </label>
-              `;
-            })}
+            <div class="pick-grid">
+              ${g.zones.map((zid) => {
+                const checked = inSession.has(zid);
+                const other = onSource[zid];
+                const elsewhere = other && other !== input.entity;
+                const pic = areaPictureForEntity(this.hass, zid);
+                return html`
+                  <button
+                    class="pick-tile ${pic ? "has-image" : ""} ${checked ? "selected" : ""}"
+                    style=${pic ? `background-image: url("${pic}")` : ""}
+                    @click=${() => this._setMember(input, zid, !checked)}
+                  >
+                    ${checked
+                      ? html`<ha-icon class="pick-check" icon="mdi:check-circle"></ha-icon>`
+                      : nothing}
+                    <span class="pick-name">${friendlyName(this.hass, zid)}</span>
+                    ${elsewhere
+                      ? html`<span class="pick-other">on ${friendlyName(this.hass, other)}</span>`
+                      : nothing}
+                  </button>
+                `;
+              })}
+            </div>
           `
         )}
       </div>
@@ -840,53 +834,52 @@ export class BinaryMoipCard extends LitElement {
     .transport { display: flex; align-items: center; gap: 4px; }
     .note { color: var(--secondary-text-color); font-size: 0.9rem; padding: 4px 0; }
 
-    /* Zone tiles — responsive grid (2-up on phones, 3-up when wider). */
-    .zones-grid {
+    /* Add-zones picker tiles — responsive grid (2-up on phones, 3-up wider),
+       with the zone's HA Area picture as the tile background. Tap to toggle. */
+    .pick-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 8px;
+      margin: 4px 0 8px;
     }
-    .zone-tile {
+    .pick-tile {
       position: relative;
-      min-height: 92px;
-      padding: 10px;
-      border-radius: 12px;
+      min-height: 64px;
+      padding: 8px 10px;
+      border-radius: 10px;
       overflow: hidden;
-      background: var(--secondary-background-color);
+      border: 1px solid var(--divider-color);
+      background: var(--card-background-color);
       background-size: cover;
       background-position: center;
       color: var(--primary-text-color);
+      cursor: pointer;
+      text-align: left;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      gap: 8px;
+      justify-content: flex-end;
+      gap: 2px;
     }
-    .zone-tile.has-image { color: #fff; }
-    .zone-tile.has-image::before {
+    .pick-tile.has-image { color: #fff; border-color: transparent; }
+    .pick-tile.has-image::before {
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(180deg, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.7) 100%);
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.65) 100%);
     }
-    .zone-tile.has-image > * { position: relative; z-index: 1; }
-    .zone-tile.has-image .icon-btn { color: #fff; }
-    .zt-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 4px;
+    .pick-tile > * { position: relative; z-index: 1; }
+    .pick-tile.selected { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+    .pick-check {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      z-index: 2;
+      color: var(--primary-color);
+      --mdc-icon-size: 20px;
     }
-    .zt-name { font-weight: 600; line-height: 1.15; overflow: hidden; }
-    .zt-actions { display: flex; flex: 0 0 auto; }
-    .zt-foot { display: flex; align-items: center; gap: 6px; }
-    .zt-foot input[type="range"] { flex: 1 1 auto; min-width: 0; }
-    .zt-pct {
-      flex: 0 0 auto;
-      width: 34px;
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      font-size: 0.85rem;
-    }
+    .pick-tile.has-image .pick-check { color: #fff; }
+    .pick-name { font-weight: 600; line-height: 1.15; }
+    .pick-other { font-size: 0.72rem; opacity: 0.85; }
 
     .row { display: flex; align-items: center; gap: 8px; }
     .row.master {
