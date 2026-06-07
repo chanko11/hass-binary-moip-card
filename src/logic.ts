@@ -152,15 +152,20 @@ export function discoverZoneIds(
     }
     return [...ids].filter((id) => hass.states[id]);
   }
-  // Fallback: every binary_moip media_player that isn't a configured source.
+  // Fallback: binary_moip media_players that are ZONES (outputs). The
+  // integration also exposes inputs/sources as media_players; those are
+  // grouping/transport-only and lack VOLUME_SET, so filtering on VOLUME_SET
+  // keeps only the room outputs. (Configured sources are excluded too.)
   const sources = new Set(config.sources ?? []);
   const out: string[] = [];
   for (const [eid, ent] of Object.entries(hass.entities ?? {})) {
+    const st = hass.states[eid];
     if (
       eid.startsWith("media_player.") &&
       ent.platform === "binary_moip" &&
       !sources.has(eid) &&
-      hass.states[eid]
+      st &&
+      ((st.attributes.supported_features ?? 0) & MediaPlayerFeature.VOLUME_SET) !== 0
     ) {
       out.push(eid);
     }

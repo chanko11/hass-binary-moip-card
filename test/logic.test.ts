@@ -183,23 +183,27 @@ test("discoverZoneIds uses zone_groups when provided", () => {
   assert.deepEqual(ids.sort(), ["media_player.a", "media_player.b"]); // missing dropped
 });
 
-test("discoverZoneIds falls back to binary_moip platform minus sources", () => {
+test("discoverZoneIds fallback = binary_moip zones (VOLUME_SET) only", () => {
+  const F = MediaPlayerFeature;
   const hass: HomeAssistant = {
     states: {
-      "media_player.zone1": ent("media_player.zone1"),
-      "media_player.src1": ent("media_player.src1"),
-      "media_player.cast": ent("media_player.cast"),
+      // a real zone (output) supports volume
+      "media_player.zone1": ent("media_player.zone1", "idle", { supported_features: F.VOLUME_SET | F.GROUPING }),
+      // a binary_moip INPUT/source: grouping/transport only, no volume
+      "media_player.input1": ent("media_player.input1", "idle", { supported_features: F.GROUPING | F.PLAY }),
+      "media_player.cast": ent("media_player.cast", "idle", { supported_features: F.VOLUME_SET }),
     },
     entities: {
       "media_player.zone1": { entity_id: "media_player.zone1", platform: "binary_moip" },
-      "media_player.src1": { entity_id: "media_player.src1", platform: "binary_moip" },
+      "media_player.input1": { entity_id: "media_player.input1", platform: "binary_moip" },
       "media_player.cast": { entity_id: "media_player.cast", platform: "cast" },
     },
     callService: async () => undefined,
     callWS: (async () => undefined) as HomeAssistant["callWS"],
   };
-  const ids = discoverZoneIds(hass, { type: "x", sources: ["media_player.src1"] });
-  assert.deepEqual(ids, ["media_player.zone1"]); // src excluded, non-moip excluded
+  const ids = discoverZoneIds(hass, { type: "x", sources: [] });
+  // input1 excluded (no VOLUME_SET), cast excluded (not binary_moip)
+  assert.deepEqual(ids, ["media_player.zone1"]);
 });
 
 test("groupZones honors config order and drops empty groups", () => {
