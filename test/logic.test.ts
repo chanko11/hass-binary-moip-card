@@ -247,11 +247,11 @@ test("groupZones falls back to floor-first area grouping, then 'Zones'", () => {
     "media_player.b",
     "media_player.c",
   ]);
-  // ordered by floor level (Main 0, Upstairs 1), then no-area "Zones" last
+  // grouped by FLOOR (Main level 0 before Upstairs level 1), no-floor "Zones" last
   assert.deepEqual(groups, [
-    { label: "Kitchen", zones: ["media_player.a"], floor: "Main" },
-    { label: "Bedroom", zones: ["media_player.b"], floor: "Upstairs" },
-    { label: "Zones", zones: ["media_player.c"], floor: null },
+    { label: "Main", zones: ["media_player.a"] },
+    { label: "Upstairs", zones: ["media_player.b"] },
+    { label: "Zones", zones: ["media_player.c"] },
   ]);
 });
 

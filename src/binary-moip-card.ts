@@ -684,7 +684,6 @@ export class BinaryMoipCard extends LitElement {
     const inSession = new Set(this._memberStates(input.entity).map((s) => s.entity_id));
     const onSource = zoneToSourceMap(this.hass, this._zoneCfg.sources);
     const groups = groupZones(this.hass, this._zoneCfg, discoverZoneIds(this.hass, this._zoneCfg));
-    let lastFloor: string | null | undefined = undefined;
     return html`
       <div class="picker">
         <div class="picker-head">
@@ -693,11 +692,8 @@ export class BinaryMoipCard extends LitElement {
             <ha-icon icon="mdi:check"></ha-icon>
           </button>
         </div>
-        ${groups.map((g) => {
-          const showFloor = g.floor != null && g.floor !== lastFloor;
-          lastFloor = g.floor;
-          return html`
-            ${showFloor ? html`<div class="picker-floor">${g.floor}</div>` : nothing}
+        ${groups.map(
+          (g) => html`
             <div class="picker-group">${g.label}</div>
             ${g.zones.map((zid) => {
               const checked = inSession.has(zid);
@@ -714,8 +710,8 @@ export class BinaryMoipCard extends LitElement {
                 </label>
               `;
             })}
-          `;
-        })}
+          `
+        )}
       </div>
     `;
   }

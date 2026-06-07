@@ -181,16 +181,15 @@ function areaIdForEntity(hass: HomeAssistant, entityId: string): string | null {
 export interface ZoneGroup {
   label: string;
   zones: string[];
-  /** Floor name for the area-based grouping (null = no floor / config groups). */
-  floor?: string | null;
 }
 
 /**
  * Group zones for the Add-zones picker.
- * - With `config.zone_groups`: the explicit, ordered groups (no floor headers).
- * - Otherwise: by HA **Area**, ordered **floor-first** (floor level, then area
- *   name); each group carries its floor name so the UI can show floor headings.
- *   Areas with no floor sort last; zones with no area fall under "Zones".
+ * - With `config.zone_groups`: the explicit, ordered groups.
+ * - Otherwise: by HA **Floor** (heading = floor name, zones listed directly —
+ *   zone names are ~1:1 with areas, so the area sub-label is redundant). Floors
+ *   order by level (unset = top), then name; zones with no floor fall under
+ *   "Zones" last.
  */
 export function groupZones(
   hass: HomeAssistant,
@@ -206,49 +205,27 @@ export function groupZones(
       .filter((g) => g.zones.length > 0);
   }
 
-  // area_id -> zones
-  const byArea: Record<string, string[]> = {};
-  const noArea: string[] = [];
+  const byFloor: Record<string, { name: string; level: number; zones: string[] }> = {};
+  const noFloor: string[] = [];
   for (const z of zoneIds) {
     const aid = areaIdForEntity(hass, z);
-    if (aid) (byArea[aid] ??= []).push(z);
-    else noArea.push(z);
+    const area = aid ? hass.areas?.[aid] : undefined;
+    const fid = area?.floor_id ?? null;
+    const floor = fid ? hass.floors?.[fid] : undefined;
+    if (fid && floor) {
+      (byFloor[fid] ??= { name: floor.name, level: floor.level ?? 0, zones: [] }).zones.push(z);
+    } else {
+      noFloor.push(z);
+    }
   }
 
-  const groups = Object.entries(byArea).map(([aid, zones]) => {
-    const area = hass.areas?.[aid];
-    const floorId = area?.floor_id ?? null;
-    const floor = floorId ? hass.floors?.[floorId] : undefined;
-    return {
-      label: area?.name ?? aid,
-      zones,
-      floor: floor?.name ?? null,
-      _floorLevel: floor?.level ?? null,
-    };
-  });
-
-  // Sort floor-first: areas with a floor before those without; then by floor
-  // level (unset level = top), then floor name (so same-level floors don't
-  // interleave), then area name.
-  groups.sort((a, b) => {
-    const af = a.floor == null ? 1 : 0;
-    const bf = b.floor == null ? 1 : 0;
-    if (af !== bf) return af - bf;
-    const al = a._floorLevel ?? 0;
-    const bl = b._floorLevel ?? 0;
-    if (al !== bl) return al - bl;
-    const fn = (a.floor ?? "").localeCompare(b.floor ?? "");
-    if (fn !== 0) return fn;
-    return a.label.localeCompare(b.label);
-  });
-
-  const result: ZoneGroup[] = groups.map(({ label, zones, floor }) => ({
-    label,
-    zones,
-    floor,
-  }));
-  if (noArea.length) result.push({ label: "Zones", zones: noArea, floor: null });
-  return result;
+  const byName = (a: string, b: string) =>
+    friendlyName(hass, a).localeCompare(friendlyName(hass, b));
+  const groups: ZoneGroup[] = Object.values(byFloor)
+    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
+    .map((f) => ({ label: f.name, zones: f.zones.sort(byName) }));
+  if (noFloor.length) groups.push({ label: "Zones", zones: noFloor.sort(byName) });
+  return groups;
 }
 
 // --- v2.2: source-first picker (HA-native browse_media + play_media) ---------
