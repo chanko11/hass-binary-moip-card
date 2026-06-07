@@ -178,6 +178,15 @@ function areaIdForEntity(hass: HomeAssistant, entityId: string): string | null {
   return areaId ?? null;
 }
 
+/** The picture URL of a zone's HA Area, for tile backgrounds (null if none). */
+export function areaPictureForEntity(
+  hass: HomeAssistant,
+  entityId: string
+): string | null {
+  const aid = areaIdForEntity(hass, entityId);
+  return (aid ? hass.areas?.[aid]?.picture : null) ?? null;
+}
+
 export interface ZoneGroup {
   label: string;
   zones: string[];

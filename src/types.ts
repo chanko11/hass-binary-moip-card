@@ -39,6 +39,7 @@ export interface RegistryArea {
   area_id: string;
   name: string;
   floor_id?: string | null;
+  picture?: string | null;
 }
 
 export interface RegistryFloor {
