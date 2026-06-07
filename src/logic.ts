@@ -227,11 +227,18 @@ export function groupZones(
     };
   });
 
-  // Sort floor-first: by floor level (nulls last), then area name.
+  // Sort floor-first: areas with a floor before those without; then by floor
+  // level (unset level = top), then floor name (so same-level floors don't
+  // interleave), then area name.
   groups.sort((a, b) => {
-    const al = a._floorLevel ?? Number.POSITIVE_INFINITY;
-    const bl = b._floorLevel ?? Number.POSITIVE_INFINITY;
+    const af = a.floor == null ? 1 : 0;
+    const bf = b.floor == null ? 1 : 0;
+    if (af !== bf) return af - bf;
+    const al = a._floorLevel ?? 0;
+    const bl = b._floorLevel ?? 0;
     if (al !== bl) return al - bl;
+    const fn = (a.floor ?? "").localeCompare(b.floor ?? "");
+    if (fn !== 0) return fn;
     return a.label.localeCompare(b.label);
   });
 
