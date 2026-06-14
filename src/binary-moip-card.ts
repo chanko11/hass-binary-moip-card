@@ -484,18 +484,30 @@ export class BinaryMoipCard extends LitElement {
 
     let body;
     if (openIdx == null) {
-      // sibling source list
-      body = sources.map(
-        (s, i) => html`
-          <button class="preset-row" @click=${() => this._selectSource(input, i)}>
-            <ha-icon icon=${s.icon ?? (s.type === "connect" ? "mdi:cast" : "mdi:music-box-multiple")}></ha-icon>
-            <span>${s.label ?? (s.type === "connect" ? "Spotify Connect" : "Music Assistant")}</span>
-            ${s.type === "connect"
-              ? html`<span class="on-other">cast</span>`
-              : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
-          </button>
-        `
-      );
+      // sibling source list, plus a Turn-off row when something's playing
+      const src = this._src(input);
+      const playing = isPlaying(src?.state) && sourceHasTransport(src);
+      body = html`
+        ${sources.map(
+          (s, i) => html`
+            <button class="preset-row" @click=${() => this._selectSource(input, i)}>
+              <ha-icon icon=${s.icon ?? (s.type === "connect" ? "mdi:cast" : "mdi:music-box-multiple")}></ha-icon>
+              <span>${s.label ?? (s.type === "connect" ? "Spotify Connect" : "Music Assistant")}</span>
+              ${s.type === "connect"
+                ? html`<span class="on-other">cast</span>`
+                : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
+            </button>
+          `
+        )}
+        ${playing
+          ? html`
+              <button class="preset-row clear" @click=${() => this._clearSource(input)}>
+                <ha-icon icon="mdi:stop-circle-outline"></ha-icon>
+                <span>Turn off — stop playing</span>
+              </button>
+            `
+          : nothing}
+      `;
     } else if (open?.type === "connect") {
       body = html`<div class="hint">${this._connectHint}</div>`;
     } else if (open?.type === "library") {
@@ -510,6 +522,15 @@ export class BinaryMoipCard extends LitElement {
     this._nav = [];
     this._children = null;
     this._connectHint = null;
+  }
+
+  /** Clear the source: stop playback on the stream (zones stay attached). */
+  private _clearSource(input: InputConfig): void {
+    this._run({ domain: "media_player", service: "media_stop", data: { entity_id: input.entity } });
+    const next = { ...this._picked };
+    delete next[input.entity];
+    this._picked = next;
+    this._resetPicker();
   }
 
   private _renderLibraryBody(input: InputConfig, source: LibrarySource) {
@@ -970,6 +991,10 @@ export class BinaryMoipCard extends LitElement {
     .preset-row span { flex: 1 1 auto; min-width: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .preset-row.selected { color: var(--primary-color); }
+    .preset-row.clear {
+      margin-top: 4px; border-top: 1px solid var(--divider-color);
+      padding-top: 10px; color: var(--error-color, #db4437);
+    }
     .preset-row .chev { color: var(--secondary-text-color); flex: 0 0 auto; }
     .thumb { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
     .on-other {
