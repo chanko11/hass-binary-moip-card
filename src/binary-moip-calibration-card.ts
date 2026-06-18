@@ -10,7 +10,7 @@ import {
 } from "./types";
 import {
   calibrationPlayCall,
-  clearAnchorCall,
+  muteCall,
   pct,
   setAnchorCall,
   spaceDeactivateCall,
@@ -20,6 +20,7 @@ import {
 
 const LEVELS = ["background", "listening", "party"] as const;
 type Level = (typeof LEVELS)[number];
+type Stage = "space" | "level" | "ref" | "walk";
 
 (window as unknown as { customCards?: unknown[] }).customCards = [
   ...((window as unknown as { customCards?: unknown[] }).customCards ?? []),
@@ -27,7 +28,7 @@ type Level = (typeof LEVELS)[number];
     type: "binary-moip-calibration-card",
     name: "Binary MoIP Calibration",
     description:
-      "Walk-around calibration for Listening Spaces: set a reference by music, match the rest by SPL with pink noise.",
+      "Guided walk-around calibration for Listening Spaces — one room at a time, match by SPL.",
   },
 ];
 
@@ -36,33 +37,33 @@ export class BinaryMoipCalibrationCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: CalibrationCardConfig;
   @state() private _spaces: WsSpace[] = [];
-  @state() private _spaceId?: string;
-  @state() private _level: Level = "background";
-  @state() private _refZone?: number; // reference zone group_id
-  @state() private _refSpl = ""; // typed SPL target (UI-only)
   @state() private _error: string | null = null;
-  @state() private _pendingVol: Record<string, number> = {}; // entity_id -> pct
+  // wizard state
+  @state() private _stage: Stage = "space";
+  @state() private _spaceId?: string;
+  @state() private _level: Level = "listening";
+  @state() private _refZone?: number;
+  @state() private _walkIdx = 0;
+  @state() private _mode: "music" | "pink" = "music";
+  @state() private _refSpl = "";
+  @state() private _pendingVol: Record<string, number> = {};
   private _fetched = false;
 
   public setConfig(config: CalibrationCardConfig): void {
     this._config = config;
   }
-
   public getCardSize(): number {
     return 8;
   }
-
   public static getStubConfig(): CalibrationCardConfig {
     return { type: "custom:binary-moip-calibration-card" };
   }
 
   protected override updated(): void {
-    // First time we have hass, load the spaces.
     if (this.hass && !this._fetched) {
       this._fetched = true;
       void this._fetchSpaces();
     }
-    // Drop optimistic volume once hass reflects it.
     let vol = this._pendingVol;
     let changed = false;
     for (const [id, p] of Object.entries(vol)) {
@@ -80,65 +81,112 @@ export class BinaryMoipCalibrationCard extends LitElement {
       const res = await this.hass.callWS<{ spaces: WsSpace[] }>(spacesWsMsg());
       this._spaces = res.spaces ?? [];
       this._error = null;
-      if (!this._spaceId && this._spaces.length) this._spaceId = this._spaces[0].id;
     } catch {
       this._error = "Couldn't read Listening Spaces from the integration.";
     }
   }
 
-  private async _run(call: ServiceCall): Promise<void> {
-    await this.hass.callService(call.domain, call.service, call.data);
+  private _run(call: ServiceCall): Promise<unknown> {
+    return this.hass.callService(call.domain, call.service, call.data);
   }
 
   private get _space(): WsSpace | undefined {
     return this._spaces.find((s) => s.id === this._spaceId);
   }
 
-  // --- actions --------------------------------------------------------------
+  /** Zones in walk order: the reference first, then the rest in Space order. */
+  private get _walkZones(): WsZone[] {
+    const space = this._space;
+    if (!space) return [];
+    const ref = space.zones.find((z) => z.group_id === this._refZone);
+    const rest = space.zones.filter((z) => z.group_id !== this._refZone);
+    return ref ? [ref, ...rest] : rest;
+  }
 
-  private _playMusic(): void {
-    if (!this._spaceId) return;
-    void this._run(
-      calibrationPlayCall(this._spaceId, {
+  private get _current(): WsZone | undefined {
+    return this._walkZones[this._walkIdx];
+  }
+
+  // --- solo: only the current zone plays (others muted) ---------------------
+
+  private _solo(currentEid: string | null | undefined): void {
+    const space = this._space;
+    if (!space) return;
+    for (const z of space.zones) {
+      if (z.entity_id) void this._run(muteCall(z.entity_id, z.entity_id !== currentEid));
+    }
+  }
+
+  private _unmuteAll(): void {
+    for (const z of this._space?.zones ?? []) {
+      if (z.entity_id) void this._run(muteCall(z.entity_id, false));
+    }
+  }
+
+  // --- wizard navigation ----------------------------------------------------
+
+  private _pickSpace(id: string): void {
+    this._spaceId = id;
+    this._stage = "level";
+  }
+  private _pickLevel(l: Level): void {
+    this._level = l;
+    this._stage = "ref";
+  }
+  private async _pickRef(gid: number): Promise<void> {
+    this._refZone = gid;
+    this._walkIdx = 0;
+    this._mode = "music";
+    this._stage = "walk";
+    // Route + working baseline for the whole space, then solo the reference.
+    await this._run(
+      calibrationPlayCall(this._spaceId!, {
         refType: "sample",
         source: this._config.source,
         level: this._level,
         setLevels: true,
       })
     );
+    this._solo(this._current?.entity_id);
   }
 
-  private _playPink(): void {
-    if (!this._spaceId) return;
-    // Keep the volumes you've dialed in; just swap the audio to pink.
-    void this._run(
-      calibrationPlayCall(this._spaceId, { refType: "pink", setLevels: false })
+  private async _toMode(mode: "music" | "pink"): Promise<void> {
+    this._mode = mode;
+    await this._run(
+      calibrationPlayCall(this._spaceId!, { refType: mode === "pink" ? "pink" : "sample", setLevels: false })
     );
   }
 
-  private async _stop(): Promise<void> {
-    if (!this._spaceId) return;
-    await this._run(spaceDeactivateCall(this._spaceId));
+  private async _goZone(idx: number): Promise<void> {
+    if (idx < 0 || idx >= this._walkZones.length) return;
+    // Leaving the reference (music) -> everything else is matched on pink.
+    if (this._walkIdx === 0 && idx > 0 && this._mode === "music") {
+      await this._toMode("pink");
+    }
+    this._walkIdx = idx;
+    this._solo(this._current?.entity_id);
   }
+
+  private async _finish(): Promise<void> {
+    this._unmuteAll();
+    if (this._spaceId) await this._run(spaceDeactivateCall(this._spaceId)); // stop calibration audio
+    this._stage = "space";
+    this._walkIdx = 0;
+    this._refZone = undefined;
+    await this._fetchSpaces();
+  }
+
+  // --- volume + save --------------------------------------------------------
 
   private _volPct(entityId: string): number {
     return this._pendingVol[entityId] ?? pct(this.hass.states[entityId]?.attributes.volume_level);
   }
-
   private _setVol(entityId: string, value: number, commit: boolean): void {
     this._pendingVol = { ...this._pendingVol, [entityId]: value };
     if (commit) void this._run(volumeSetCall(entityId, value / 100));
   }
-
-  private async _save(zone: WsZone): Promise<void> {
-    if (!this._spaceId) return;
-    await this._run(setAnchorCall(this._spaceId, zone.group_id, this._level));
-    await this._fetchSpaces(); // refresh anchors/badges
-  }
-
-  private async _clear(zone: WsZone): Promise<void> {
-    if (!this._spaceId) return;
-    await this._run(clearAnchorCall(this._spaceId, zone.group_id, this._level));
+  private async _save(z: WsZone): Promise<void> {
+    await this._run(setAnchorCall(this._spaceId!, z.group_id, this._level));
     await this._fetchSpaces();
   }
 
@@ -146,36 +194,48 @@ export class BinaryMoipCalibrationCard extends LitElement {
 
   protected override render(): TemplateResult | typeof nothing {
     if (!this.hass || !this._config) return nothing;
-    const space = this._space;
     return html`
       <ha-card>
-        <h1 class="card-header">${this._config.title ?? "Calibrate Listening Spaces"}</h1>
+        <h1 class="card-header">${this._config.title ?? "Calibrate"}</h1>
         <div class="content">
           ${this._error ? html`<div class="note">${this._error}</div>` : nothing}
-          ${this._renderSpacePicker()}
-          ${space ? this._renderSpace(space) : html`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`}
+          ${this._renderStage()}
         </div>
       </ha-card>
     `;
   }
 
-  private _renderSpacePicker() {
-    if (!this._spaces.length) return nothing;
+  private _renderStage() {
+    switch (this._stage) {
+      case "space":
+        return this._renderPickSpace();
+      case "level":
+        return this._renderPickLevel();
+      case "ref":
+        return this._renderPickRef();
+      case "walk":
+        return this._renderWalk();
+    }
+  }
+
+  private _step(n: number, label: string) {
+    return html`<div class="steps">Step ${n}/4 · ${label}</div>`;
+  }
+
+  private _renderPickSpace() {
+    if (!this._spaces.length)
+      return html`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`;
     return html`
-      <div class="chips">
+      ${this._step(1, "Pick a Space")}
+      <div class="list">
         ${this._spaces.map(
           (s) => html`
-            <button
-              class="chip ${s.id === this._spaceId ? "on" : ""}"
-              @click=${() => {
-                this._spaceId = s.id;
-                this._refZone = undefined;
-              }}
-            >
-              ${s.name}
-              ${s.zones.every((z) => z.calibrated) && s.zones.length
-                ? html`<ha-icon icon="mdi:check-circle"></ha-icon>`
-                : nothing}
+            <button class="row-btn" @click=${() => this._pickSpace(s.id)}>
+              <span>${s.name}</span>
+              ${s.zones.length && s.zones.every((z) => z.calibrated)
+                ? html`<ha-icon class="ok" icon="mdi:check-circle"></ha-icon>`
+                : html`<span class="muted">${s.zones.filter((z) => z.calibrated).length}/${s.zones.length}</span>`}
+              <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
             </button>
           `
         )}
@@ -183,88 +243,92 @@ export class BinaryMoipCalibrationCard extends LitElement {
     `;
   }
 
-  private _renderSpace(space: WsSpace) {
+  private _renderPickLevel() {
     return html`
-      <div class="seg">
+      <button class="back" @click=${() => (this._stage = "space")}><ha-icon icon="mdi:chevron-left"></ha-icon> ${this._space?.name}</button>
+      ${this._step(2, "Pick a Level")}
+      <div class="list">
         ${LEVELS.map(
-          (lvl) => html`
-            <button class="seg-btn ${lvl === this._level ? "on" : ""}" @click=${() => (this._level = lvl)}>
-              ${lvl}
-            </button>
-          `
+          (l) => html`<button class="row-btn lvl" @click=${() => this._pickLevel(l)}>
+            <span>${l}</span><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+          </button>`
         )}
       </div>
-
-      <div class="audio">
-        <button class="btn" @click=${this._playMusic}>
-          <ha-icon icon="mdi:music"></ha-icon> Music
-        </button>
-        <button class="btn" @click=${this._playPink}>
-          <ha-icon icon="mdi:waveform"></ha-icon> Pink noise
-        </button>
-        <button class="btn ghost" @click=${this._stop}>
-          <ha-icon icon="mdi:stop"></ha-icon> Stop
-        </button>
-      </div>
-
-      <div class="spl">
-        <label>Reference SPL (your meter reading)</label>
-        <input
-          type="number"
-          inputmode="decimal"
-          .value=${this._refSpl}
-          placeholder="e.g. 72"
-          @input=${(e: Event) => (this._refSpl = (e.target as HTMLInputElement).value)}
-        />
-        <span class="unit">dB</span>
-      </div>
-      <div class="hint">
-        Pick the reference zone, set it with <b>Music</b>, switch to <b>Pink noise</b>,
-        read your meter into the box above — then match each room to that SPL and
-        <b>Save</b>.
-      </div>
-
-      ${space.zones.map((z) => this._renderZone(z))}
     `;
   }
 
-  private _renderZone(z: WsZone) {
-    const isRef = this._refZone === z.group_id;
+  private _renderPickRef() {
+    return html`
+      <button class="back" @click=${() => (this._stage = "level")}><ha-icon icon="mdi:chevron-left"></ha-icon> ${this._level}</button>
+      ${this._step(3, "Pick the reference zone")}
+      <div class="hint">Choose your most prominent listening position.</div>
+      <div class="list">
+        ${(this._space?.zones ?? []).map(
+          (z) => html`<button class="row-btn" @click=${() => this._pickRef(z.group_id)}>
+            <ha-icon icon="mdi:target"></ha-icon><span>${z.name}</span>
+            <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+          </button>`
+        )}
+      </div>
+    `;
+  }
+
+  private _renderWalk() {
+    const z = this._current;
+    if (!z) return nothing;
+    const n = this._walkZones.length;
+    const isRef = this._walkIdx === 0;
     const eid = z.entity_id;
     const value = eid ? this._volPct(eid) : 0;
     const anchor = z.anchors[this._level];
     return html`
-      <div class="zone ${isRef ? "ref" : ""}">
-        <div class="zhead">
-          <button
-            class="refbtn ${isRef ? "on" : ""}"
-            title="Set as reference zone"
-            @click=${() => (this._refZone = z.group_id)}
-          >
-            <ha-icon icon=${isRef ? "mdi:target" : "mdi:target-variant"}></ha-icon>
-          </button>
-          <span class="zname">${z.name}</span>
-          <span class="anchor ${anchor == null ? "uncal" : ""}">
-            ${anchor == null ? "uncalibrated" : `${this._level}: ${Math.round(anchor)}`}
-          </span>
-        </div>
-        <div class="zctl">
-          <input
-            type="range" min="0" max="100" .value=${String(value)}
-            ?disabled=${!eid}
-            @input=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), false)}
-            @change=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), true)}
-          />
-          <span class="pctv">${value}%</span>
-          <button class="save" title="Save this level" @click=${() => this._save(z)}>
-            <ha-icon icon="mdi:content-save"></ha-icon>
-          </button>
-          ${anchor == null
-            ? nothing
-            : html`<button class="save ghost" title="Clear" @click=${() => this._clear(z)}>
-                <ha-icon icon="mdi:close"></ha-icon>
-              </button>`}
-        </div>
+      <button class="back" @click=${() => (this._stage = "ref")}><ha-icon icon="mdi:chevron-left"></ha-icon> change reference</button>
+      <div class="steps">${this._space?.name} · ${this._level} · zone ${this._walkIdx + 1}/${n}</div>
+
+      <div class="zonebig ${isRef ? "ref" : ""}">
+        <ha-icon icon=${isRef ? "mdi:target" : "mdi:speaker"}></ha-icon>
+        <div class="zb-name">${z.name}${isRef ? html` <span class="tag">reference</span>` : nothing}</div>
+        <div class="zb-sub">only this room is playing${anchor != null ? ` · saved ${Math.round(anchor)}` : ""}</div>
+      </div>
+
+      ${isRef
+        ? html`<div class="audio">
+            <button class="btn ${this._mode === "music" ? "on" : ""}" @click=${() => this._toMode("music")}>
+              <ha-icon icon="mdi:music"></ha-icon> Music
+            </button>
+            <button class="btn ${this._mode === "pink" ? "on" : ""}" @click=${() => this._toMode("pink")}>
+              <ha-icon icon="mdi:waveform"></ha-icon> Pink
+            </button>
+          </div>
+          <div class="hint">Set a comfortable ${this._level} level with music, Save it, then switch to Pink and note the SPL on your meter app.</div>`
+        : html`<div class="hint">Pink noise is playing. Adjust until your meter reads the target SPL, then Save.</div>`}
+
+      <div class="spl">
+        <label>${isRef ? "Reference SPL" : "Target SPL"}</label>
+        <input type="number" inputmode="decimal" .value=${this._refSpl}
+          placeholder="e.g. 72"
+          @input=${(e: Event) => (this._refSpl = (e.target as HTMLInputElement).value)} />
+        <span class="unit">dB</span>
+      </div>
+
+      <div class="vol">
+        <input type="range" min="0" max="100" .value=${String(value)} ?disabled=${!eid}
+          @input=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), true)} />
+        <span class="pctv">${value}%</span>
+      </div>
+
+      <button class="save-big" @click=${() => this._save(z)}>
+        <ha-icon icon="mdi:content-save"></ha-icon> ${isRef ? "Save as reference" : "Save"}
+      </button>
+
+      <div class="nav">
+        <button class="btn ghost" ?disabled=${this._walkIdx === 0} @click=${() => this._goZone(this._walkIdx - 1)}>
+          <ha-icon icon="mdi:chevron-left"></ha-icon> Prev
+        </button>
+        ${this._walkIdx < n - 1
+          ? html`<button class="btn" @click=${() => this._goZone(this._walkIdx + 1)}>Next <ha-icon icon="mdi:chevron-right"></ha-icon></button>`
+          : html`<button class="btn on" @click=${this._finish}><ha-icon icon="mdi:check"></ha-icon> Finish</button>`}
       </div>
     `;
   }
@@ -274,52 +338,44 @@ export class BinaryMoipCalibrationCard extends LitElement {
     .content { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
     .note { color: var(--secondary-text-color); }
     .hint { color: var(--secondary-text-color); font-size: 0.85rem; }
+    .steps { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--secondary-text-color); }
+    .back { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; background: none; border: none; color: var(--primary-color); cursor: pointer; padding: 0; }
 
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chip {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 6px 12px; border-radius: 16px; cursor: pointer;
-      border: 1px solid var(--divider-color); background: none;
-      color: var(--primary-text-color); font-size: 0.95rem;
+    .list { display: flex; flex-direction: column; gap: 8px; }
+    .row-btn {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 12px; border-radius: 10px; border: 1px solid var(--divider-color);
+      background: none; color: var(--primary-text-color); cursor: pointer; font-size: 1rem;
     }
-    .chip.on { background: var(--primary-color); color: #fff; border-color: transparent; }
-    .chip ha-icon { --mdc-icon-size: 16px; }
+    .row-btn span { flex: 1; text-align: left; text-transform: capitalize; }
+    .row-btn .chev { color: var(--secondary-text-color); }
+    .row-btn .ok { color: var(--primary-color); }
+    .muted { color: var(--secondary-text-color); font-size: 0.85rem; }
 
-    .seg { display: flex; gap: 0; border: 1px solid var(--divider-color); border-radius: 10px; overflow: hidden; }
-    .seg-btn {
-      flex: 1; padding: 8px; background: none; border: none; cursor: pointer;
-      color: var(--primary-text-color); text-transform: capitalize;
-      border-right: 1px solid var(--divider-color);
-    }
-    .seg-btn:last-child { border-right: none; }
-    .seg-btn.on { background: var(--primary-color); color: #fff; }
+    .zonebig { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px; border-radius: 12px; background: var(--secondary-background-color); }
+    .zonebig.ref { background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+    .zonebig ha-icon { --mdc-icon-size: 36px; color: var(--primary-color); }
+    .zb-name { font-size: 1.2rem; font-weight: 600; }
+    .zb-name .tag { font-size: 0.7rem; background: var(--primary-color); color: #fff; border-radius: 4px; padding: 1px 5px; vertical-align: middle; }
+    .zb-sub { color: var(--secondary-text-color); font-size: 0.85rem; }
 
     .audio { display: flex; gap: 8px; }
-    .btn {
-      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color);
-      background: none; color: var(--primary-text-color); cursor: pointer;
-    }
+    .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); cursor: pointer; }
+    .btn.on { background: var(--primary-color); color: #fff; border-color: transparent; }
     .btn.ghost { color: var(--secondary-text-color); }
+    .btn[disabled] { opacity: 0.4; cursor: default; }
 
     .spl { display: flex; align-items: center; gap: 8px; }
-    .spl label { flex: 1; color: var(--secondary-text-color); font-size: 0.9rem; }
-    .spl input { width: 80px; padding: 6px; }
+    .spl label { flex: 1; color: var(--secondary-text-color); }
+    .spl input { width: 84px; padding: 8px; font-size: 1rem; }
     .spl .unit { color: var(--secondary-text-color); }
 
-    .zone { border-top: 1px solid var(--divider-color); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-    .zone.ref { background: color-mix(in srgb, var(--primary-color) 8%, transparent); border-radius: 8px; padding: 8px; }
-    .zhead { display: flex; align-items: center; gap: 8px; }
-    .refbtn { background: none; border: none; cursor: pointer; color: var(--secondary-text-color); padding: 2px; }
-    .refbtn.on { color: var(--primary-color); }
-    .zname { flex: 1; font-weight: 600; }
-    .anchor { font-size: 0.82rem; color: var(--primary-text-color); }
-    .anchor.uncal { color: var(--warning-color, #e0a030); }
-    .zctl { display: flex; align-items: center; gap: 8px; }
-    .zctl input[type="range"] { flex: 1; min-width: 0; }
-    .pctv { width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
-    .save { background: none; border: none; cursor: pointer; color: var(--primary-color); padding: 4px; }
-    .save.ghost { color: var(--secondary-text-color); }
+    .vol { display: flex; align-items: center; gap: 10px; }
+    .vol input[type="range"] { flex: 1; min-width: 0; }
+    .pctv { width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+
+    .save-big { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 10px; border: none; background: var(--primary-color); color: #fff; cursor: pointer; font-size: 1rem; }
+    .nav { display: flex; gap: 8px; }
     input[type="range"] { accent-color: var(--primary-color); }
   `;
 }
