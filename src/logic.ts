@@ -418,3 +418,42 @@ export function clearAnchorCall(space: string, zone: number, level: string): Ser
 export function spaceDeactivateCall(space: string): ServiceCall {
   return { domain: "binary_moip", service: "space_deactivate", data: { space } };
 }
+
+// --- Listening Spaces: playback card service builders ------------------------
+
+export interface SpaceActivateOpts {
+  level?: string;
+  master?: number;
+  source?: string;
+}
+
+export function spaceActivateCall(space: string, opts: SpaceActivateOpts = {}): ServiceCall {
+  const data: Record<string, unknown> = { space };
+  if (opts.master !== undefined) data.master = opts.master;
+  else if (opts.level) data.level = opts.level;
+  if (opts.source) data.source = opts.source;
+  return { domain: "binary_moip", service: "space_activate", data };
+}
+
+export function spaceSetLevelCall(space: string, level: string): ServiceCall {
+  return { domain: "binary_moip", service: "space_set_level", data: { space, level } };
+}
+
+export function spaceSetMasterCall(space: string, position: number): ServiceCall {
+  return {
+    domain: "binary_moip",
+    service: "space_set_master",
+    data: { space, master: position },
+  };
+}
+
+export function zoneSetCall(
+  space: string,
+  zone: number,
+  action: "on" | "off" | "nudge",
+  delta?: number
+): ServiceCall {
+  const data: Record<string, unknown> = { space, zone, action };
+  if (delta !== undefined) data.delta = delta;
+  return { domain: "binary_moip", service: "zone_set", data };
+}

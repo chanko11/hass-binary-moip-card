@@ -183,6 +183,14 @@ export interface CalibrationCardConfig {
   title?: string;
 }
 
+/** Space-first playback card: turn Spaces on at a level, master, expand to zones. */
+export interface SpacesCardConfig {
+  type: string;
+  /** Selectable sources to activate a Space with (the MoIP inputs/streams). */
+  inputs?: InputConfig[];
+  title?: string;
+}
+
 /** media_player supported_features bit flags (subset). */
 export const MediaPlayerFeature = {
   PAUSE: 1,

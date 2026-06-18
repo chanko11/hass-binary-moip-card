@@ -1,8 +1,9 @@
 import { LitElement, css, html, nothing, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
-// Second element shipped in the same bundle: the walk-around calibration card.
+// Sibling elements shipped in the same bundle: calibration + Space-first playback.
 import "./binary-moip-calibration-card";
+import "./binary-moip-spaces-card";
 import {
   BrowseNode,
   CardConfig,

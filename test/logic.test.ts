@@ -407,3 +407,28 @@ test("clearAnchorCall + spaceDeactivateCall", async () => {
     domain: "binary_moip", service: "space_deactivate", data: { space: "s" },
   });
 });
+
+// --- Listening Spaces: playback card builders -------------------------------
+
+test("spaceActivateCall: level vs master + source", async () => {
+  const { spaceActivateCall } = await import("../src/logic.ts");
+  assert.deepEqual(spaceActivateCall("s", { level: "party", source: "media_player.x" }).data, {
+    space: "s", level: "party", source: "media_player.x",
+  });
+  // master takes precedence over level
+  assert.deepEqual(spaceActivateCall("s", { level: "party", master: 40 }).data, {
+    space: "s", master: 40,
+  });
+});
+
+test("spaceSetLevel / spaceSetMaster / zoneSet builders", async () => {
+  const { spaceSetLevelCall, spaceSetMasterCall, zoneSetCall } = await import("../src/logic.ts");
+  assert.deepEqual(spaceSetLevelCall("s", "listening"), {
+    domain: "binary_moip", service: "space_set_level", data: { space: "s", level: "listening" },
+  });
+  assert.deepEqual(spaceSetMasterCall("s", 65).data, { space: "s", master: 65 });
+  assert.deepEqual(zoneSetCall("s", 11, "off").data, { space: "s", zone: 11, action: "off" });
+  assert.deepEqual(zoneSetCall("s", 11, "nudge", 5).data, {
+    space: "s", zone: 11, action: "nudge", delta: 5,
+  });
+});
