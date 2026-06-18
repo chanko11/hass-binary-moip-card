@@ -149,6 +149,40 @@ export interface CardConfig {
   title?: string;
 }
 
+// --- Listening Spaces (calibration card; reads the binary_moip/spaces ws API) ---
+
+/** A zone within a Space, as returned by the binary_moip/spaces ws command. */
+export interface WsZone {
+  group_id: number;
+  entity_id: string | null;
+  name: string;
+  /** level -> native anchor value (null = uncalibrated for that level). */
+  anchors: Record<string, number | null>;
+  calibrated: boolean;
+  current_native: number | null;
+  bounds: [number | null, number | null];
+}
+
+/** A Listening Space, as returned by the binary_moip/spaces ws command. */
+export interface WsSpace {
+  id: string;
+  name: string;
+  label: string | null;
+  master_positions: Record<string, number>;
+  active: boolean;
+  master: number | null;
+  level: string | null;
+  source: string | null;
+  zones: WsZone[];
+}
+
+export interface CalibrationCardConfig {
+  type: string;
+  /** MoIP source media_player to route while calibrating (e.g. a streaming input). */
+  source?: string;
+  title?: string;
+}
+
 /** media_player supported_features bit flags (subset). */
 export const MediaPlayerFeature = {
   PAUSE: 1,

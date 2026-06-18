@@ -357,3 +357,53 @@ test("browseMsg targets the MA player; root has no content id", () => {
     media_content_type: "music_assistant",
   });
 });
+
+// --- Listening Spaces: calibration card builders ----------------------------
+
+test("spacesWsMsg builds the read command", async () => {
+  const { spacesWsMsg } = await import("../src/logic.ts");
+  assert.deepEqual(spacesWsMsg(), { type: "binary_moip/spaces" });
+});
+
+test("calibrationPlayCall: defaults + options", async () => {
+  const { calibrationPlayCall } = await import("../src/logic.ts");
+  assert.deepEqual(calibrationPlayCall("main_living"), {
+    domain: "binary_moip",
+    service: "calibration_play",
+    data: { space: "main_living", ref_type: "auto" },
+  });
+  assert.deepEqual(
+    calibrationPlayCall("main_living", {
+      refType: "pink",
+      source: "media_player.ha_streaming_1",
+      level: "listening",
+      setLevels: false,
+    }).data,
+    {
+      space: "main_living",
+      ref_type: "pink",
+      source: "media_player.ha_streaming_1",
+      level: "listening",
+      set_levels: false,
+    }
+  );
+});
+
+test("setAnchorCall snapshots (no value) or stores an explicit value", async () => {
+  const { setAnchorCall } = await import("../src/logic.ts");
+  assert.deepEqual(setAnchorCall("s", 11, "party").data, { space: "s", zone: 11, level: "party" });
+  assert.deepEqual(setAnchorCall("s", 11, "party", 70).data, {
+    space: "s", zone: 11, level: "party", value: 70,
+  });
+});
+
+test("clearAnchorCall + spaceDeactivateCall", async () => {
+  const { clearAnchorCall, spaceDeactivateCall } = await import("../src/logic.ts");
+  assert.deepEqual(clearAnchorCall("s", 11, "background"), {
+    domain: "binary_moip", service: "calibration_clear_anchor",
+    data: { space: "s", zone: 11, level: "background" },
+  });
+  assert.deepEqual(spaceDeactivateCall("s"), {
+    domain: "binary_moip", service: "space_deactivate", data: { space: "s" },
+  });
+});

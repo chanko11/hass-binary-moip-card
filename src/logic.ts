@@ -364,3 +364,57 @@ export function browseMsg(
   }
   return msg;
 }
+
+// --- Listening Spaces: calibration card service/ws builders ------------------
+
+/** Websocket message to read all Listening Spaces (binary_moip/spaces). */
+export function spacesWsMsg(): Record<string, unknown> {
+  return { type: "binary_moip/spaces" };
+}
+
+export interface CalibrationPlayOpts {
+  refType?: "auto" | "pink" | "sample";
+  source?: string;
+  sample?: string;
+  level?: string;
+  setLevels?: boolean;
+}
+
+/** Audition a reference across a Space's zones for calibration. */
+export function calibrationPlayCall(
+  space: string,
+  opts: CalibrationPlayOpts = {}
+): ServiceCall {
+  const data: Record<string, unknown> = { space, ref_type: opts.refType ?? "auto" };
+  if (opts.source) data.source = opts.source;
+  if (opts.sample) data.sample = opts.sample;
+  if (opts.level) data.level = opts.level;
+  if (opts.setLevels !== undefined) data.set_levels = opts.setLevels;
+  return { domain: "binary_moip", service: "calibration_play", data };
+}
+
+/** Save a zone's anchor for a level (omit value -> snapshot current live). */
+export function setAnchorCall(
+  space: string,
+  zone: number,
+  level: string,
+  value?: number
+): ServiceCall {
+  const data: Record<string, unknown> = { space, zone, level };
+  if (value !== undefined) data.value = value;
+  return { domain: "binary_moip", service: "calibration_set_anchor", data };
+}
+
+/** Clear a zone's anchor for a level (to re-calibrate). */
+export function clearAnchorCall(space: string, zone: number, level: string): ServiceCall {
+  return {
+    domain: "binary_moip",
+    service: "calibration_clear_anchor",
+    data: { space, zone, level },
+  };
+}
+
+/** Deactivate a Space (stop calibration audio + unroute). */
+export function spaceDeactivateCall(space: string): ServiceCall {
+  return { domain: "binary_moip", service: "space_deactivate", data: { space } };
+}
