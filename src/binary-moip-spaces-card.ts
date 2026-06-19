@@ -10,12 +10,16 @@ import {
   WsZone,
 } from "./types";
 import {
+  isPlaying,
+  muteCall,
   pct,
+  sourceHasTransport,
   spaceActivateCall,
   spaceDeactivateCall,
   spaceSetLevelCall,
   spaceSetMasterCall,
   spacesWsMsg,
+  transportCall,
   volumeSetCall,
   zoneSetCall,
 } from "./logic";
@@ -231,6 +235,40 @@ export class BinaryMoipSpacesCard extends LitElement {
           )}
         </div>
       </div>
+      ${this._renderNowPlaying(s.source)}
+    `;
+  }
+
+  /** Now-playing + transport for the Space's source (a stream that proxies it). */
+  private _renderNowPlaying(srcId: string | null) {
+    const src = srcId ? this.hass.states[srcId] : undefined;
+    if (!src || !sourceHasTransport(src)) return nothing; // physical input / no transport
+    const a = src.attributes;
+    const playing = src.state === "playing";
+    const idle = !isPlaying(src.state);
+    return html`
+      <div class="np">
+        <div class="art">
+          ${a.entity_picture
+            ? html`<img src=${a.entity_picture} alt="" />`
+            : html`<ha-icon icon="mdi:music"></ha-icon>`}
+        </div>
+        <div class="meta">
+          <div class="t">${idle ? "Nothing playing" : a.media_title ?? ""}</div>
+          <div class="ar">${idle ? "" : a.media_artist ?? ""}</div>
+        </div>
+        <div class="tr">
+          <button class="icon-btn" @click=${() => this._run(transportCall(srcId!, "media_previous_track"))}>
+            <ha-icon icon="mdi:skip-previous"></ha-icon>
+          </button>
+          <button class="icon-btn big" @click=${() => this._run(transportCall(srcId!, "media_play_pause"))}>
+            <ha-icon icon=${playing ? "mdi:pause" : "mdi:play"}></ha-icon>
+          </button>
+          <button class="icon-btn" @click=${() => this._run(transportCall(srcId!, "media_next_track"))}>
+            <ha-icon icon="mdi:skip-next"></ha-icon>
+          </button>
+        </div>
+      </div>
     `;
   }
 
@@ -241,13 +279,18 @@ export class BinaryMoipSpacesCard extends LitElement {
     // A zone is "on" in the session if it's routed (has a source) — approximated
     // by the integration; here we offer a toggle that routes/unroutes it.
     const on = eid ? this.hass.states[eid]?.attributes.source !== "None" : false;
+    const muted = eid ? !!this.hass.states[eid]?.attributes.is_volume_muted : false;
     return html`
       <div class="zone">
-        <button class="icon-btn" title=${on ? "Turn off" : "Turn on"}
+        <button class="icon-btn" title=${on ? "Drop from space" : "Add to space"}
           @click=${() => this._zoneToggle(s, z, !on)}>
           <ha-icon icon=${on ? "mdi:speaker" : "mdi:speaker-off"}></ha-icon>
         </button>
         <span class="zname">${z.name}</span>
+        <button class="icon-btn" title=${muted ? "Unmute" : "Mute"} ?disabled=${!inSpace}
+          @click=${() => eid && this._run(muteCall(eid, !muted))}>
+          <ha-icon icon=${muted ? "mdi:volume-off" : "mdi:volume-high"}></ha-icon>
+        </button>
         <input type="range" min="0" max="100" .value=${String(value)} ?disabled=${!inSpace}
           @input=${(e: Event) => eid && this._setZoneVol(eid, Number((e.target as HTMLInputElement).value), false)}
           @change=${(e: Event) => eid && this._setZoneVol(eid, Number((e.target as HTMLInputElement).value), true)} />
@@ -291,6 +334,16 @@ export class BinaryMoipSpacesCard extends LitElement {
     .zone input[type="range"] { flex: 1; min-width: 0; }
 
     .icon-btn { background: none; border: none; cursor: pointer; color: var(--primary-text-color); padding: 4px; --mdc-icon-size: 22px; }
+    .icon-btn.big { --mdc-icon-size: 30px; color: var(--primary-color); }
+    .icon-btn[disabled] { opacity: 0.4; cursor: default; }
     input[type="range"] { accent-color: var(--primary-color); }
+
+    .np { display: flex; align-items: center; gap: 10px; }
+    .np .art { width: 44px; height: 44px; border-radius: 6px; overflow: hidden; background: var(--secondary-background-color); display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .np .art img { width: 100%; height: 100%; object-fit: cover; }
+    .np .meta { flex: 1; min-width: 0; }
+    .np .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .np .ar { color: var(--secondary-text-color); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .np .tr { display: flex; align-items: center; flex: 0 0 auto; }
   `;
 }
