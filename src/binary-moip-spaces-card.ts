@@ -99,20 +99,38 @@ export class BinaryMoipSpacesCard extends LitElement {
 
   // --- actions --------------------------------------------------------------
 
-  private _activate(space: WsSpace, source: string, level?: string): void {
-    void this._runRefresh(
-      spaceActivateCall(space.id, { source, level: level ?? space.level ?? "listening" })
-    );
+  private _clearMaster(id: string): void {
+    if (id in this._pendingMaster) {
+      const m = { ...this._pendingMaster };
+      delete m[id];
+      this._pendingMaster = m;
+    }
+  }
+
+  private async _activate(space: WsSpace, source: string, level?: string): Promise<void> {
+    const lvl = level ?? space.level ?? "listening";
+    const pos = space.master_positions?.[lvl];
+    if (pos != null) this._pendingMaster = { ...this._pendingMaster, [space.id]: Math.round(pos) };
+    await this._runRefresh(spaceActivateCall(space.id, { source, level: lvl }));
+    this._clearMaster(space.id);
   }
   private _deactivate(space: WsSpace): void {
+    this._clearMaster(space.id);
     void this._runRefresh(spaceDeactivateCall(space.id));
   }
-  private _setLevel(space: WsSpace, level: string): void {
-    void this._runRefresh(spaceSetLevelCall(space.id, level));
+  private async _setLevel(space: WsSpace, level: string): Promise<void> {
+    // Jump the slider to the preset's position immediately, then reconcile.
+    const pos = space.master_positions?.[level];
+    if (pos != null) this._pendingMaster = { ...this._pendingMaster, [space.id]: Math.round(pos) };
+    await this._runRefresh(spaceSetLevelCall(space.id, level));
+    this._clearMaster(space.id);
   }
-  private _setMaster(space: WsSpace, value: number, commit: boolean): void {
+  private async _setMaster(space: WsSpace, value: number, commit: boolean): Promise<void> {
     this._pendingMaster = { ...this._pendingMaster, [space.id]: value };
-    if (commit) void this._runRefresh(spaceSetMasterCall(space.id, value));
+    if (commit) {
+      await this._runRefresh(spaceSetMasterCall(space.id, value));
+      this._clearMaster(space.id);
+    }
   }
 
   private _volPct(entityId: string): number {
