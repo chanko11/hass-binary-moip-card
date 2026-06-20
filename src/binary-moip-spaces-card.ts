@@ -61,6 +61,7 @@ export class BinaryMoipSpacesCard extends LitElement {
   @state() private _browseLoading = false;
   @state() private _browseError: string | null = null;
   @state() private _connectHint: string | null = null;
+  @state() private _sourceVolSpace: string | null = null; // space id whose source-vol panel is open
   private _fetched = false;
 
   private get _sources(): StreamSource[] {
@@ -336,11 +337,35 @@ export class BinaryMoipSpacesCard extends LitElement {
         </div>
       </div>
       ${input?.ma_player
-        ? html`<button class="change-btn" @click=${() => this._openPicker(s)}>
-            <ha-icon icon="mdi:playlist-music"></ha-icon> Change content
-          </button>`
+        ? html`
+            <div class="srcrow">
+              <button class="change-btn" @click=${() => this._openPicker(s)}>
+                <ha-icon icon="mdi:playlist-music"></ha-icon> Change content
+              </button>
+              <button class="icon-btn" title="Source settings"
+                @click=${() => (this._sourceVolSpace = this._sourceVolSpace === s.id ? null : s.id)}>
+                <ha-icon icon="mdi:tune-vertical"></ha-icon>
+              </button>
+            </div>
+            ${this._sourceVolSpace === s.id ? this._renderSourceVol(input.ma_player) : nothing}
+          `
         : nothing}
       ${this._renderNowPlaying(s.source)}
+    `;
+  }
+
+  /** Source settings: the streaming player's own volume (upstream gain). */
+  private _renderSourceVol(maPlayer: string) {
+    const value = this._volPct(maPlayer);
+    return html`
+      <div class="srcvol">
+        <ha-icon icon="mdi:cast-audio"></ha-icon>
+        <span class="lbl">Source volume</span>
+        <input type="range" min="0" max="100" .value=${String(value)}
+          @input=${(e: Event) => this._setZoneVol(maPlayer, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => this._setZoneVol(maPlayer, Number((e.target as HTMLInputElement).value), true)} />
+        <span class="pctv">${value}%</span>
+      </div>
     `;
   }
 
@@ -529,8 +554,12 @@ export class BinaryMoipSpacesCard extends LitElement {
     .np .ar { color: var(--secondary-text-color); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .np .tr { display: flex; align-items: center; flex: 0 0 auto; }
 
-    .change-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--divider-color); background: none; color: var(--primary-color); cursor: pointer; }
+    .srcrow { display: flex; align-items: center; gap: 8px; }
+    .change-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--divider-color); background: none; color: var(--primary-color); cursor: pointer; }
     .change-btn ha-icon { --mdc-icon-size: 18px; }
+    .srcvol { display: flex; align-items: center; gap: 8px; }
+    .srcvol .lbl { color: var(--secondary-text-color); font-size: 0.85rem; flex: 0 0 auto; }
+    .srcvol input[type="range"] { flex: 1; min-width: 0; }
     .picker { display: flex; flex-direction: column; gap: 2px; }
     .picker-head { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; }
     .picker-title { flex: 1; font-weight: 600; }
