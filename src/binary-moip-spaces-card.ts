@@ -2,17 +2,26 @@ import { LitElement, css, html, nothing, TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
 import {
+  BrowseNode,
   HomeAssistant,
   InputConfig,
+  LibrarySource,
   ServiceCall,
   SpacesCardConfig,
+  StreamSource,
   WsSpace,
   WsZone,
 } from "./types";
 import {
+  browseMsg,
+  categoryIcon,
+  categoryLabel,
+  DEFAULT_SOURCES,
+  isConnectSource,
   isPlaying,
   muteCall,
   pct,
+  playItemCall,
   sourceHasTransport,
   spaceActivateCall,
   spaceDeactivateCall,
@@ -44,7 +53,23 @@ export class BinaryMoipSpacesCard extends LitElement {
   @state() private _expanded: Record<string, boolean> = {};
   @state() private _pendingMaster: Record<string, number> = {}; // space id -> master
   @state() private _pendingVol: Record<string, number> = {}; // zone entity_id -> pct
+  // Change-source picker (open for one Space at a time).
+  @state() private _pickerSpace: string | null = null;
+  @state() private _openSource: number | null = null; // index into _sources; null = sibling list
+  @state() private _nav: BrowseNode[] = [];
+  @state() private _children: BrowseNode[] | null = null;
+  @state() private _browseLoading = false;
+  @state() private _browseError: string | null = null;
+  @state() private _connectHint: string | null = null;
   private _fetched = false;
+
+  private get _sources(): StreamSource[] {
+    return this._config.sources ?? DEFAULT_SOURCES;
+  }
+  /** The configured input (with ma_player) feeding a Space's current source. */
+  private _sourceInput(s: WsSpace): InputConfig | undefined {
+    return this._inputs.find((i) => i.entity === s.source);
+  }
 
   public setConfig(config: SpacesCardConfig): void {
     this._config = config;
@@ -148,6 +173,71 @@ export class BinaryMoipSpacesCard extends LitElement {
     void this._runRefresh(zoneSetCall(space.id, z.group_id, on ? "on" : "off"));
   }
 
+  // --- change-source picker (ported from the input card) --------------------
+
+  private _resetPicker(): void {
+    this._pickerSpace = null;
+    this._openSource = null;
+    this._nav = [];
+    this._children = null;
+    this._browseError = null;
+    this._connectHint = null;
+  }
+  private _openPicker(space: WsSpace): void {
+    this._resetPicker();
+    this._pickerSpace = space.id;
+  }
+  private async _loadChildren(maPlayer: string, node?: BrowseNode): Promise<void> {
+    this._children = null;
+    this._browseLoading = true;
+    this._browseError = null;
+    try {
+      const res = await this.hass.callWS<BrowseNode>(
+        browseMsg(maPlayer, node?.media_content_id, node?.media_content_type)
+      );
+      this._children = res.children ?? [];
+    } catch {
+      this._browseError = "Couldn't reach Music Assistant.";
+      this._children = [];
+    } finally {
+      this._browseLoading = false;
+    }
+  }
+  private _selectSourceList(): void {
+    this._openSource = null;
+    this._nav = [];
+    this._children = null;
+    this._connectHint = null;
+  }
+  private _selectSource(input: InputConfig, idx: number): void {
+    this._openSource = idx;
+    this._nav = [];
+    this._children = null;
+    this._connectHint = null;
+    if (isConnectSource(this._sources[idx])) {
+      this._connectHint = `Cast from your Spotify app to ${input.name}.`;
+    }
+  }
+  private _browseInto(input: InputConfig, node: BrowseNode): void {
+    if (!input.ma_player) return;
+    this._nav = [...this._nav, node];
+    void this._loadChildren(input.ma_player, node);
+  }
+  private _navBack(input: InputConfig): void {
+    const nav = this._nav.slice(0, -1);
+    this._nav = nav;
+    this._children = null;
+    if (nav.length && input.ma_player) void this._loadChildren(input.ma_player, nav[nav.length - 1]);
+  }
+  private _onItem(input: InputConfig, node: BrowseNode): void {
+    if (node.can_play && input.ma_player) {
+      void this._run(playItemCall(input.ma_player, node.media_content_id));
+      this._resetPicker();
+    } else if (node.can_expand) {
+      this._browseInto(input, node);
+    }
+  }
+
   // --- render ---------------------------------------------------------------
 
   protected override render(): TemplateResult | typeof nothing {
@@ -226,6 +316,16 @@ export class BinaryMoipSpacesCard extends LitElement {
           @change=${(e: Event) => this._setMaster(s, Number((e.target as HTMLInputElement).value), true)} />
         <span class="pctv">${master}%</span>
       </div>
+      ${this._renderSource(s)}
+    `;
+  }
+
+  private _renderSource(s: WsSpace) {
+    const input = this._sourceInput(s);
+    if (input?.ma_player && this._pickerSpace === s.id) {
+      return this._renderSourcePicker(input);
+    }
+    return html`
       <div class="src">
         <span>Source: ${this._inputName(s.source) ?? s.source ?? "—"}</span>
         <div class="chips small">
@@ -235,8 +335,91 @@ export class BinaryMoipSpacesCard extends LitElement {
           )}
         </div>
       </div>
+      ${input?.ma_player
+        ? html`<button class="change-btn" @click=${() => this._openPicker(s)}>
+            <ha-icon icon="mdi:playlist-music"></ha-icon> Change content
+          </button>`
+        : nothing}
       ${this._renderNowPlaying(s.source)}
     `;
+  }
+
+  private _renderSourcePicker(input: InputConfig) {
+    const sources = this._sources;
+    const openIdx = this._openSource;
+    const open = openIdx != null ? sources[openIdx] : undefined;
+    const drilling = open?.type === "library" && this._nav.length > 0;
+    const title =
+      openIdx == null
+        ? "Change content"
+        : this._nav.length
+          ? this._nav[this._nav.length - 1].title
+          : open?.label ?? "Source";
+    let body;
+    if (openIdx == null) {
+      body = sources.map(
+        (src, i) => html`<button class="preset-row" @click=${() => this._selectSource(input, i)}>
+          <ha-icon icon=${src.icon ?? (src.type === "connect" ? "mdi:cast" : "mdi:music-box-multiple")}></ha-icon>
+          <span>${src.label ?? (src.type === "connect" ? "Spotify Connect" : "Music Assistant")}</span>
+          ${src.type === "connect"
+            ? html`<span class="on-other">cast</span>`
+            : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
+        </button>`
+      );
+    } else if (open?.type === "connect") {
+      body = html`<div class="hint">${this._connectHint}</div>`;
+    } else if (open?.type === "library") {
+      body = this._renderLibraryBody(input, open);
+    }
+    return html`
+      <div class="picker">
+        <div class="picker-head">
+          ${openIdx != null
+            ? html`<button class="icon-btn" title="Back" @click=${() =>
+                drilling ? this._navBack(input) : this._selectSourceList()}>
+                <ha-icon icon="mdi:chevron-left"></ha-icon>
+              </button>`
+            : nothing}
+          <span class="picker-title">${title}</span>
+          <button class="icon-btn" title="Close" @click=${() => this._resetPicker()}>
+            <ha-icon icon="mdi:close"></ha-icon>
+          </button>
+        </div>
+        ${body}
+      </div>
+    `;
+  }
+
+  private _renderLibraryBody(input: InputConfig, source: LibrarySource) {
+    if (this._browseLoading) return html`<div class="hint">Loading…</div>`;
+    if (this._browseError) return html`<div class="note">${this._browseError}</div>`;
+    if (this._nav.length === 0) {
+      const cats = source.categories ?? ["playlists", "radio"];
+      return cats.map(
+        (cat) => html`<button class="preset-row" @click=${() =>
+          this._browseInto(input, {
+            title: categoryLabel(cat),
+            media_content_id: cat,
+            media_content_type: "music_assistant",
+            can_expand: true,
+          })}>
+          <ha-icon icon=${categoryIcon(cat)}></ha-icon>
+          <span>${categoryLabel(cat)}</span>
+          <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+        </button>`
+      );
+    }
+    const children = this._children ?? [];
+    if (!children.length) return html`<div class="hint">Nothing here.</div>`;
+    return children.map(
+      (node) => html`<button class="preset-row" @click=${() => this._onItem(input, node)}>
+        ${node.thumbnail
+          ? html`<img class="thumb" src=${node.thumbnail} alt="" />`
+          : html`<ha-icon icon=${node.can_play ? "mdi:play-circle-outline" : "mdi:folder-outline"}></ha-icon>`}
+        <span>${node.title}</span>
+        ${node.can_play ? nothing : html`<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>`}
+      </button>`
+    );
   }
 
   /** Now-playing + transport for the Space's source (a stream that proxies it). */
@@ -345,5 +528,16 @@ export class BinaryMoipSpacesCard extends LitElement {
     .np .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .np .ar { color: var(--secondary-text-color); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .np .tr { display: flex; align-items: center; flex: 0 0 auto; }
+
+    .change-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--divider-color); background: none; color: var(--primary-color); cursor: pointer; }
+    .change-btn ha-icon { --mdc-icon-size: 18px; }
+    .picker { display: flex; flex-direction: column; gap: 2px; }
+    .picker-head { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; }
+    .picker-title { flex: 1; font-weight: 600; }
+    .preset-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; background: none; border: none; width: 100%; text-align: left; color: var(--primary-text-color); cursor: pointer; font-size: 1rem; }
+    .preset-row span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .preset-row .chev { color: var(--secondary-text-color); flex: 0 0 auto; }
+    .on-other { margin-left: auto; font-size: 0.8rem; color: var(--secondary-text-color); }
+    .thumb { width: 32px; height: 32px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
   `;
 }

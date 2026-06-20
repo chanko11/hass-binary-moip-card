@@ -188,6 +188,8 @@ export interface SpacesCardConfig {
   type: string;
   /** Selectable sources to activate a Space with (the MoIP inputs/streams). */
   inputs?: InputConfig[];
+  /** Change-source picker siblings (MA library / Spotify Connect). Default DEFAULT_SOURCES. */
+  sources?: StreamSource[];
   title?: string;
 }
 
