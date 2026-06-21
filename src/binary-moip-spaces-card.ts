@@ -293,9 +293,8 @@ export class BinaryMoipSpacesCard extends LitElement {
   }
 
   private _renderTile(s: WsSpace, selected: boolean) {
-    const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
-    const icon = lbl?.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off");
-    const accent = lbl?.color ? `--stile-accent: var(--${lbl.color}-color);` : "";
+    const icon = s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off");
+    const accent = s.color ? `--stile-accent: var(--${s.color}-color);` : "";
     const status = s.active ? s.level ?? "on" : "Off";
     return html`
       <button class="stile ${selected ? "sel" : ""} ${s.active ? "active" : ""}"

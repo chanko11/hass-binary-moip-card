@@ -312,12 +312,11 @@ export class BinaryMoipCard extends LitElement {
 
   private _renderSpaceRow(s: WsSpace) {
     const expanded = this._expandedSpace === s.id;
-    const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
-    const accent = lbl?.color ? `--row-accent: var(--${lbl.color}-color);` : "";
+    const accent = s.color ? `--row-accent: var(--${s.color}-color);` : "";
     return html`
       <div class="sprow" style=${accent}>
         <div class="sprow-head">
-          <ha-icon class="sp-icon" icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
+          <ha-icon class="sp-icon" icon=${s.icon || "mdi:speaker-multiple"}></ha-icon>
           <span class="sprow-name">${s.name}</span>
           <button class="icon-btn" title="Turn off" @click=${() => this._runSpace(spaceDeactivateCall(s.id))}>
             <ha-icon icon="mdi:power"></ha-icon>
@@ -403,12 +402,11 @@ export class BinaryMoipCard extends LitElement {
             : s.source === input.entity
               ? "here"
               : "on " + (this._inputName(s.source) ?? "another source");
-          const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
           return html`<button class="preset-row" @click=${() =>
             here
               ? this._runSpace(spaceDeactivateCall(s.id))
               : this._runSpace(spaceActivateCall(s.id, { source: input.entity, level: s.level ?? "listening" }))}>
-            <ha-icon icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
+            <ha-icon icon=${s.icon || "mdi:speaker-multiple"}></ha-icon>
             <span>${s.name}</span>
             <span class="on-other">${status}</span>
             ${here ? html`<ha-icon class="chev" icon="mdi:check-circle"></ha-icon>` : nothing}

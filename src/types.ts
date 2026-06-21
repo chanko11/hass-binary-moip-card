@@ -176,6 +176,9 @@ export interface WsSpace {
   id: string;
   name: string;
   label: string | null;
+  /** Label-derived icon/color (from the integration's label registry lookup). */
+  icon?: string | null;
+  color?: string | null;
   master_positions: Record<string, number>;
   active: boolean;
   master: number | null;
