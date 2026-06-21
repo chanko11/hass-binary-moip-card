@@ -134,10 +134,10 @@ var Ge=Object.defineProperty;var Ye=Object.getOwnPropertyDescriptor;var p=(s,i,e
           ${e}
         </div>
       </ha-card>
-    `}_renderSpace(e){let t=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0);return a`
-      <div class="space ${e.active?"active":""}">
+    `}_renderSpace(e){let t=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0),n=e.color?`--space-accent: var(--${e.color}-color);`:"";return a`
+      <div class="space ${e.active?"active":""}" style=${n}>
         <div class="shead">
-          <ha-icon icon=${e.active?"mdi:speaker-multiple":"mdi:speaker-off"}></ha-icon>
+          <ha-icon class="shead-icon" icon=${e.icon||(e.active?"mdi:speaker-multiple":"mdi:speaker-off")}></ha-icon>
           <span class="sname">${e.name}</span>
           ${e.active?a`<button class="icon-btn" title="Turn off" @click=${()=>this._deactivate(e)}>
                 <ha-icon icon="mdi:power"></ha-icon>
@@ -161,10 +161,10 @@ var Ge=Object.defineProperty;var Ye=Object.getOwnPropertyDescriptor;var p=(s,i,e
         <div class="stile-name">${e.name}</div>
         <div class="stile-sub">${o}</div>
       </button>
-    `}_renderDetail(e){let t=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0);return a`
-      <div class="space detail ${e.active?"active":""}">
+    `}_renderDetail(e){let t=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0),n=e.color?`--space-accent: var(--${e.color}-color);`:"";return a`
+      <div class="space detail ${e.active?"active":""}" style=${n}>
         <div class="shead">
-          <ha-icon icon=${e.active?"mdi:speaker-multiple":"mdi:speaker-off"}></ha-icon>
+          <ha-icon class="shead-icon" icon=${e.icon||(e.active?"mdi:speaker-multiple":"mdi:speaker-off")}></ha-icon>
           <span class="sname">${e.name}</span>
           ${e.active?a`<button class="icon-btn" title="Turn off" @click=${()=>this._deactivate(e)}>
                 <ha-icon icon="mdi:power"></ha-icon>
@@ -299,7 +299,7 @@ var Ge=Object.defineProperty;var Ye=Object.getOwnPropertyDescriptor;var p=(s,i,e
     .hint { font-size: 0.85rem; }
 
     .space { border: 1px solid var(--divider-color); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-    .space.active { border-color: var(--primary-color); }
+    .space.active { border-color: var(--space-accent, var(--primary-color)); }
 
     /* select (master-detail) view: horizontal tile rail + one detail panel below */
     .srail { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
@@ -320,6 +320,7 @@ var Ge=Object.defineProperty;var Ye=Object.getOwnPropertyDescriptor;var p=(s,i,e
     .space.detail { margin-top: 4px; }
     .shead { display: flex; align-items: center; gap: 8px; }
     .shead ha-icon { color: var(--primary-color); }
+    .shead .shead-icon { color: var(--space-accent, var(--primary-color)); }
     .sname { flex: 1; font-weight: 600; font-size: 1.05rem; }
 
     .presets { display: flex; gap: 0; border: 1px solid var(--divider-color); border-radius: 10px; overflow: hidden; }

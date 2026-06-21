@@ -263,10 +263,11 @@ export class BinaryMoipSpacesCard extends LitElement {
   /** "all" view: a Space fully expanded. */
   private _renderSpace(s: WsSpace) {
     const master = this._pendingMaster[s.id] ?? (s.master != null ? Math.round(s.master) : 0);
+    const accent = s.color ? `--space-accent: var(--${s.color}-color);` : "";
     return html`
-      <div class="space ${s.active ? "active" : ""}">
+      <div class="space ${s.active ? "active" : ""}" style=${accent}>
         <div class="shead">
-          <ha-icon icon=${s.active ? "mdi:speaker-multiple" : "mdi:speaker-off"}></ha-icon>
+          <ha-icon class="shead-icon" icon=${s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off")}></ha-icon>
           <span class="sname">${s.name}</span>
           ${s.active
             ? html`<button class="icon-btn" title="Turn off" @click=${() => this._deactivate(s)}>
@@ -312,10 +313,11 @@ export class BinaryMoipSpacesCard extends LitElement {
   /** The control panel for the selected Space (swapped below the list). */
   private _renderDetail(s: WsSpace) {
     const master = this._pendingMaster[s.id] ?? (s.master != null ? Math.round(s.master) : 0);
+    const accent = s.color ? `--space-accent: var(--${s.color}-color);` : "";
     return html`
-      <div class="space detail ${s.active ? "active" : ""}">
+      <div class="space detail ${s.active ? "active" : ""}" style=${accent}>
         <div class="shead">
-          <ha-icon icon=${s.active ? "mdi:speaker-multiple" : "mdi:speaker-off"}></ha-icon>
+          <ha-icon class="shead-icon" icon=${s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off")}></ha-icon>
           <span class="sname">${s.name}</span>
           ${s.active
             ? html`<button class="icon-btn" title="Turn off" @click=${() => this._deactivate(s)}>
@@ -571,7 +573,7 @@ export class BinaryMoipSpacesCard extends LitElement {
     .hint { font-size: 0.85rem; }
 
     .space { border: 1px solid var(--divider-color); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-    .space.active { border-color: var(--primary-color); }
+    .space.active { border-color: var(--space-accent, var(--primary-color)); }
 
     /* select (master-detail) view: horizontal tile rail + one detail panel below */
     .srail { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
@@ -592,6 +594,7 @@ export class BinaryMoipSpacesCard extends LitElement {
     .space.detail { margin-top: 4px; }
     .shead { display: flex; align-items: center; gap: 8px; }
     .shead ha-icon { color: var(--primary-color); }
+    .shead .shead-icon { color: var(--space-accent, var(--primary-color)); }
     .sname { flex: 1; font-weight: 600; font-size: 1.05rem; }
 
     .presets { display: flex; gap: 0; border: 1px solid var(--divider-color); border-radius: 10px; overflow: hidden; }
