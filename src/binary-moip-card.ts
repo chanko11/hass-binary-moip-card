@@ -14,34 +14,31 @@ import {
   ServiceCall,
   StreamSource,
   WsSpace,
+  WsZone,
 } from "./types";
 import {
-  areaPictureForEntity,
-  averageVolumePct,
   browseMsg,
   categoryIcon,
   categoryLabel,
   DEFAULT_SOURCES,
-  discoverZoneIds,
-  friendlyName,
-  groupZones,
   isConnectSource,
   isPlaying,
   isSourceActive,
-  joinCall,
-  masterDeltaCalls,
   muteCall,
   pct,
   playItemCall,
-  sessionZoneIds,
   sourceHasTransport,
+  spaceActivateCall,
+  spaceDeactivateCall,
+  spaceSetLevelCall,
+  spaceSetMasterCall,
   spacesWsMsg,
-  zoneInScope,
+  zoneSetCall,
   transportCall,
-  unjoinCall,
   volumeSetCall,
-  zoneToSourceMap,
 } from "./logic";
+
+const SPACE_LEVELS = ["background", "listening", "party"] as const;
 
 const VERSION = "2.3.2";
 /* eslint-disable no-console */
@@ -66,7 +63,6 @@ export class BinaryMoipCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: CardConfig;
   @state() private _selected?: string;
-  @state() private _showAddZones = false;
   // Change-source picker (source-first: siblings -> library browse / connect)
   @state() private _pickerOpen = false;
   @state() private _openSource: number | null = null; // index into _sources; null = sibling list
@@ -82,10 +78,11 @@ export class BinaryMoipCard extends LitElement {
   > = {};
   // Optimistic UI — show changes immediately, reconcile when hass catches up.
   @state() private _pendingVol: Record<string, number> = {}; // entity_id -> pct
-  @state() private _pendingMaster: Record<string, number> = {}; // input -> pct
-  @state() private _pendingMembers: Record<string, Record<string, boolean>> = {}; // input -> zone -> in?
   @state() private _showSourceVol = false;
-  @state() private _spacesList: WsSpace[] = []; // for the "add Spaces" picker
+  @state() private _spacesList: WsSpace[] = []; // session = Listening Spaces on this source
+  @state() private _showAddSpaces = false;
+  @state() private _expandedSpace: string | null = null;
+  @state() private _pendingSpaceMaster: Record<string, number> = {}; // space id -> master
   private _spacesFetched = false;
 
   public setConfig(config: CardConfig): void {
@@ -124,16 +121,6 @@ export class BinaryMoipCard extends LitElement {
 
   private _src(input: InputConfig): HassEntity | undefined {
     return this.hass.states[input.entity];
-  }
-
-  /** {zone_groups, sources} for the reused zone helpers (sources = all inputs). */
-  private get _zoneCfg() {
-    return {
-      zone_groups: this._config.zone_groups,
-      sources: this._config.inputs.map((i) => i.entity),
-      floors: this._config.floors,
-      areas: this._config.areas,
-    };
   }
 
   /** The current source for a stream's tile/row headline — the SOURCE, never the
@@ -279,51 +266,6 @@ export class BinaryMoipCard extends LitElement {
       }
     }
     if (changed) this._pendingVol = vol;
-
-    let mast = this._pendingMaster;
-    let mChanged = false;
-    for (const [inputId, p] of Object.entries(mast)) {
-      const zs = this._memberStates(inputId);
-      if (zs.length && averageVolumePct(zs) === p) {
-        if (!mChanged) { mast = { ...mast }; mChanged = true; }
-        delete mast[inputId];
-      }
-    }
-    if (mChanged) this._pendingMaster = mast;
-
-    let mem = this._pendingMembers;
-    let memChanged = false;
-    for (const [inputId, zmap] of Object.entries(mem)) {
-      const actual = new Set(sessionZoneIds(this.hass.states[inputId]));
-      for (const [zid, want] of Object.entries(zmap)) {
-        if (actual.has(zid) === want) {
-          if (!memChanged) { mem = { ...mem }; memChanged = true; }
-          else if (mem[inputId] === zmap) mem[inputId] = { ...zmap };
-          delete mem[inputId][zid];
-          if (!Object.keys(mem[inputId]).length) delete mem[inputId];
-        }
-      }
-    }
-    if (memChanged) this._pendingMembers = mem;
-  }
-
-  /** Session zone states for an input, with optimistic add/remove applied. Shows
-   *  ALL joined zones (including any outside the card's floor/area scope, so you
-   *  can see everything currently playing). Scope only gates *adding* (the
-   *  Add-zones picker) and which zones are *modifiable* — see _ownedStates. */
-  private _memberStates(inputId: string): HassEntity[] {
-    const ids = new Set(sessionZoneIds(this.hass.states[inputId]));
-    const pend = this._pendingMembers[inputId];
-    if (pend) for (const [z, want] of Object.entries(pend)) (want ? ids.add(z) : ids.delete(z));
-    return [...ids]
-      .map((id) => this.hass.states[id])
-      .filter((s): s is HassEntity => !!s)
-      .sort((a, b) => friendlyName(this.hass, a.entity_id).localeCompare(friendlyName(this.hass, b.entity_id)));
-  }
-
-  /** Whether a zone is within the card's configured scope (i.e. modifiable). */
-  private _inScope(entityId: string): boolean {
-    return zoneInScope(this.hass, entityId, this._zoneCfg);
   }
 
   /** Displayed volume % for an entity: optimistic value if pending, else live. */
@@ -336,32 +278,149 @@ export class BinaryMoipCard extends LitElement {
     if (commit) this._run(volumeSetCall(entityId, value / 100));
   }
 
-  /** Add (want=true) or remove (want=false) a zone from an input — optimistically. */
-  private _setMember(input: InputConfig, zid: string, want: boolean): void {
-    const cur = this._pendingMembers[input.entity] ?? {};
-    this._pendingMembers = {
-      ...this._pendingMembers,
-      [input.entity]: { ...cur, [zid]: want },
-    };
-    this._run(want ? joinCall(input.entity, zid) : unjoinCall(zid));
+  // --- Listening Space session (the source-first card targets Spaces) --------
+
+  private _inputName(entity: string | null | undefined): string | undefined {
+    return this._config.inputs.find((i) => i.entity === entity)?.name;
+  }
+  private async _refreshSpaces(): Promise<void> {
+    try {
+      const r = await this.hass.callWS<{ spaces: WsSpace[] }>(spacesWsMsg());
+      this._spacesList = r.spaces ?? [];
+    } catch {
+      /* leave prior list */
+    }
+  }
+  private async _runSpace(call: ServiceCall): Promise<void> {
+    await this._run(call);
+    await this._refreshSpaces();
   }
 
-  /** Add/remove a whole Space's zones to the input in one tap. */
-  private _setSpace(input: InputConfig, space: WsSpace, want: boolean): void {
-    for (const z of space.zones) {
-      if (z.entity_id) this._setMember(input, z.entity_id, want);
-    }
+  private _renderSpaceSession(input: InputConfig) {
+    const active = this._spacesList.filter((s) => s.active && s.source === input.entity);
+    return html`
+      ${active.length
+        ? active.map((s) => this._renderSpaceRow(s))
+        : html`<div class="note">No listening spaces yet — add one below.</div>`}
+      ${this._showAddSpaces
+        ? this._renderAddSpaces(input)
+        : html`<button class="add-btn" @click=${() => (this._showAddSpaces = true)}>
+            <ha-icon icon="mdi:plus"></ha-icon> Add listening spaces
+          </button>`}
+    `;
+  }
+
+  private _renderSpaceRow(s: WsSpace) {
+    const expanded = this._expandedSpace === s.id;
+    const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
+    const accent = lbl?.color ? `--row-accent: var(--${lbl.color}-color);` : "";
+    return html`
+      <div class="sprow" style=${accent}>
+        <div class="sprow-head">
+          <ha-icon class="sp-icon" icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
+          <span class="sprow-name">${s.name}</span>
+          <button class="icon-btn" title="Turn off" @click=${() => this._runSpace(spaceDeactivateCall(s.id))}>
+            <ha-icon icon="mdi:power"></ha-icon>
+          </button>
+        </div>
+        <div class="presets">
+          ${SPACE_LEVELS.map(
+            (l) => html`<button class="preset ${s.level === l ? "on" : ""}"
+              @click=${() => this._runSpace(spaceSetLevelCall(s.id, l))}>${l}</button>`
+          )}
+        </div>
+        <button class="expand" @click=${() => (this._expandedSpace = expanded ? null : s.id)}>
+          <ha-icon icon=${expanded ? "mdi:chevron-up" : "mdi:chevron-down"}></ha-icon>
+          ${expanded ? "Hide" : "Fine control"}
+        </button>
+        ${expanded ? this._renderSpaceDetail(s) : nothing}
+      </div>
+    `;
+  }
+
+  private _renderSpaceDetail(s: WsSpace) {
+    const master = this._pendingSpaceMaster[s.id] ?? (s.master != null ? Math.round(s.master) : 0);
+    return html`
+      <div class="row master">
+        <ha-icon icon="mdi:volume-high"></ha-icon>
+        <span class="row-name">Master</span>
+        <input type="range" min="0" max="100" .value=${String(master)}
+          @input=${(e: Event) =>
+            (this._pendingSpaceMaster = {
+              ...this._pendingSpaceMaster,
+              [s.id]: Number((e.target as HTMLInputElement).value),
+            })}
+          @change=${async (e: Event) => {
+            const v = Number((e.target as HTMLInputElement).value);
+            await this._runSpace(spaceSetMasterCall(s.id, v));
+            const m = { ...this._pendingSpaceMaster };
+            delete m[s.id];
+            this._pendingSpaceMaster = m;
+          }} />
+        <span class="pct">${master}%</span>
+      </div>
+      ${s.zones.map((z) => this._renderSpaceZone(s, z))}
+    `;
+  }
+
+  private _renderSpaceZone(s: WsSpace, z: WsZone) {
+    const eid = z.entity_id;
+    const value = eid ? this._volPct(eid) : 0;
+    const on = eid ? this.hass.states[eid]?.attributes.source !== "None" : false;
+    const muted = eid ? !!this.hass.states[eid]?.attributes.is_volume_muted : false;
+    return html`
+      <div class="row">
+        <button class="icon-btn" title=${on ? "Drop zone" : "Add zone"}
+          @click=${() => this._runSpace(zoneSetCall(s.id, z.group_id, on ? "off" : "on"))}>
+          <ha-icon icon=${on ? "mdi:speaker" : "mdi:speaker-off"}></ha-icon>
+        </button>
+        <span class="row-name">${z.name}</span>
+        <button class="icon-btn" ?disabled=${!eid} title=${muted ? "Unmute" : "Mute"}
+          @click=${() => eid && this._run(muteCall(eid, !muted))}>
+          <ha-icon icon=${muted ? "mdi:volume-off" : "mdi:volume-high"}></ha-icon>
+        </button>
+        <input type="range" min="0" max="100" .value=${String(value)} ?disabled=${!eid}
+          @input=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), false)}
+          @change=${(e: Event) => eid && this._setVol(eid, Number((e.target as HTMLInputElement).value), true)} />
+        <span class="pct">${value}%</span>
+      </div>
+    `;
+  }
+
+  private _renderAddSpaces(input: InputConfig) {
+    return html`
+      <div class="picker">
+        <div class="picker-head">
+          <span class="picker-title">Add listening spaces</span>
+          <button class="icon-btn" @click=${() => (this._showAddSpaces = false)}>
+            <ha-icon icon="mdi:check"></ha-icon>
+          </button>
+        </div>
+        ${this._spacesList.map((s) => {
+          const here = s.active && s.source === input.entity;
+          const status = !s.active
+            ? "idle"
+            : s.source === input.entity
+              ? "here"
+              : "on " + (this._inputName(s.source) ?? "another source");
+          const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
+          return html`<button class="preset-row" @click=${() =>
+            here
+              ? this._runSpace(spaceDeactivateCall(s.id))
+              : this._runSpace(spaceActivateCall(s.id, { source: input.entity, level: s.level ?? "listening" }))}>
+            <ha-icon icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
+            <span>${s.name}</span>
+            <span class="on-other">${status}</span>
+            ${here ? html`<ha-icon class="chev" icon="mdi:check-circle"></ha-icon>` : nothing}
+          </button>`;
+        })}
+      </div>
+    `;
   }
 
   protected override render(): TemplateResult | typeof nothing {
     if (!this.hass || !this._config) return nothing;
     const input = this._selectedInput;
-    const src = input ? this._src(input) : undefined;
-    const zoneStates = input ? this._memberStates(input.entity) : [];
-    // Zones this card may modify (within its floor/area scope). Out-of-scope
-    // members are still shown, but read-only, and master/turn-off skip them.
-    const owned = zoneStates.filter((z) => this._inScope(z.entity_id));
-
     return html`
       <ha-card>
         ${this._config.title
@@ -372,14 +431,7 @@ export class BinaryMoipCard extends LitElement {
           ${input
             ? this._renderStreamCard(input)
             : html`<div class="note">No input available</div>`}
-          ${input && owned.length ? this._renderMaster(input, owned) : nothing}
-          ${input
-            ? zoneStates.map((z) => this._renderZoneRow(input, z, !this._inScope(z.entity_id)))
-            : nothing}
-          ${input && src && zoneStates.length === 0
-            ? html`<div class="note">No zones yet — add one below to hear this.</div>`
-            : nothing}
-          ${input && src ? this._renderAddZones(input) : nothing}
+          ${input ? this._renderSpaceSession(input) : nothing}
         </div>
       </ha-card>
     `;
@@ -406,7 +458,7 @@ export class BinaryMoipCard extends LitElement {
               class="tile ${sel ? "selected" : ""}"
               @click=${() => {
                 this._selected = input.entity;
-                this._showAddZones = false;
+                this._showAddSpaces = false;
                 this._resetPicker();
               }}
             >
@@ -655,168 +707,6 @@ export class BinaryMoipCard extends LitElement {
     `;
   }
 
-  private _renderMaster(input: InputConfig, zoneStates: HassEntity[]) {
-    const disp = zoneStates.length
-      ? Math.round(
-          zoneStates.reduce((s, z) => s + this._volPct(z.entity_id), 0) / zoneStates.length
-        )
-      : 0;
-    const value = this._pendingMaster[input.entity] ?? disp;
-    return html`
-      <div class="row master">
-        <ha-icon icon="mdi:speaker-multiple"></ha-icon>
-        <span class="row-name">All zones</span>
-        <input type="range" min="0" max="100" .value=${String(value)}
-          @input=${(e: Event) =>
-            (this._pendingMaster = {
-              ...this._pendingMaster,
-              [input.entity]: Number((e.target as HTMLInputElement).value),
-            })}
-          @change=${(e: Event) =>
-            this._commitMaster(input, zoneStates, Number((e.target as HTMLInputElement).value))} />
-        <span class="pct">${value}%</span>
-        <button class="icon-btn" title="Turn off — remove all zones"
-          @click=${() => this._turnOff(input, zoneStates)}>
-          <ha-icon icon="mdi:power"></ha-icon>
-        </button>
-      </div>
-    `;
-  }
-
-  private _commitMaster(input: InputConfig, zoneStates: HassEntity[], value: number): void {
-    const calls = masterDeltaCalls(zoneStates, value);
-    const vol = { ...this._pendingVol };
-    for (const c of calls) vol[c.data.entity_id as string] = Math.round((c.data.volume_level as number) * 100);
-    this._pendingVol = vol;
-    this._pendingMaster = { ...this._pendingMaster, [input.entity]: value };
-    this._run(calls);
-  }
-
-  /** Turn the whole stream off: drop every zone, and stop it if it has transport. */
-  private _turnOff(input: InputConfig, zoneStates: HassEntity[]): void {
-    const pend = { ...(this._pendingMembers[input.entity] ?? {}) };
-    for (const z of zoneStates) pend[z.entity_id] = false;
-    this._pendingMembers = { ...this._pendingMembers, [input.entity]: pend };
-    const calls: ServiceCall[] = zoneStates.map((z) => unjoinCall(z.entity_id));
-    const src = this._src(input);
-    if (src && sourceHasTransport(src)) {
-      calls.push({ domain: "media_player", service: "media_stop", data: { entity_id: input.entity } });
-    }
-    this._run(calls);
-    const next = { ...this._picked };
-    delete next[input.entity];
-    this._picked = next;
-  }
-
-  private _renderZoneRow(input: InputConfig, zone: HassEntity, locked = false) {
-    const muted = !!zone.attributes.is_volume_muted;
-    const value = this._volPct(zone.entity_id);
-    if (locked) {
-      // Joined to this source but outside the card's scope: show it (so you
-      // know it's playing) but read-only — no volume/mute/remove here.
-      return html`
-        <div class="row locked" title="Outside this card's area — control it from its own card">
-          <ha-icon class="lock" icon="mdi:lock-outline"></ha-icon>
-          <span class="row-name">${friendlyName(this.hass, zone.entity_id)}</span>
-          <input type="range" min="0" max="100" .value=${String(value)} disabled />
-          <span class="pct">${value}%</span>
-        </div>
-      `;
-    }
-    return html`
-      <div class="row">
-        <button class="icon-btn" title="Mute"
-          @click=${() => this._run(muteCall(zone.entity_id, !muted))}>
-          <ha-icon icon=${muted ? "mdi:volume-off" : "mdi:volume-high"}></ha-icon>
-        </button>
-        <span class="row-name">${friendlyName(this.hass, zone.entity_id)}</span>
-        <input type="range" min="0" max="100" .value=${String(value)}
-          @input=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), false)}
-          @change=${(e: Event) => this._setVol(zone.entity_id, Number((e.target as HTMLInputElement).value), true)} />
-        <span class="pct">${value}%</span>
-        <button class="icon-btn" title="Turn off this zone"
-          @click=${() => this._setMember(input, zone.entity_id, false)}>
-          <ha-icon icon="mdi:close"></ha-icon>
-        </button>
-      </div>
-    `;
-  }
-
-  // --- add zones (reused from v1; joins to the selected input's source) -----
-
-  private _renderAddZones(input: InputConfig) {
-    if (!this._showAddZones) {
-      return html`
-        <button class="add-btn" @click=${() => (this._showAddZones = true)}>
-          <ha-icon icon="mdi:plus"></ha-icon> Add zones
-        </button>
-      `;
-    }
-    const inSession = new Set(this._memberStates(input.entity).map((s) => s.entity_id));
-    const onSource = zoneToSourceMap(this.hass, this._zoneCfg.sources);
-    const groups = groupZones(this.hass, this._zoneCfg, discoverZoneIds(this.hass, this._zoneCfg));
-    return html`
-      <div class="picker">
-        <div class="picker-head">
-          <span class="picker-title">Add zones</span>
-          <button class="icon-btn" @click=${() => (this._showAddZones = false)}>
-            <ha-icon icon="mdi:check"></ha-icon>
-          </button>
-        </div>
-        ${this._spacesList.length
-          ? html`
-              <div class="picker-group">Spaces</div>
-              <div class="space-chips">
-                ${this._spacesList.map((sp) => {
-                  const zids = sp.zones
-                    .map((z) => z.entity_id)
-                    .filter((e): e is string => !!e);
-                  const allIn = zids.length > 0 && zids.every((e) => inSession.has(e));
-                  const lbl = sp.label ? this.hass.labels?.[sp.label] : undefined;
-                  const accent = lbl?.color ? `--chip-accent: var(--${lbl.color}-color);` : "";
-                  return html`
-                    <button class="space-chip ${allIn ? "on" : ""}" style=${accent}
-                      @click=${() => this._setSpace(input, sp, !allIn)}>
-                      <ha-icon icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
-                      <span>${sp.name}</span>
-                      ${allIn ? html`<ha-icon class="x" icon="mdi:close"></ha-icon>` : nothing}
-                    </button>
-                  `;
-                })}
-              </div>
-            `
-          : nothing}
-        ${groups.map(
-          (g) => html`
-            <div class="picker-group">${g.label}</div>
-            <div class="pick-grid">
-              ${g.zones.map((zid) => {
-                const checked = inSession.has(zid);
-                const other = onSource[zid];
-                const elsewhere = other && other !== input.entity;
-                const pic = areaPictureForEntity(this.hass, zid);
-                return html`
-                  <button
-                    class="pick-tile ${pic ? "has-image" : ""} ${checked ? "selected" : ""}"
-                    style=${pic ? `background-image: url("${pic}")` : ""}
-                    @click=${() => this._setMember(input, zid, !checked)}
-                  >
-                    ${checked
-                      ? html`<ha-icon class="pick-check" icon="mdi:check-circle"></ha-icon>`
-                      : nothing}
-                    <span class="pick-name">${friendlyName(this.hass, zid)}</span>
-                    ${elsewhere
-                      ? html`<span class="pick-other">on ${friendlyName(this.hass, other)}</span>`
-                      : nothing}
-                  </button>
-                `;
-              })}
-            </div>
-          `
-        )}
-      </div>
-    `;
-  }
 
   static override styles = css`
     ha-card { overflow: hidden; }
@@ -1011,6 +901,21 @@ export class BinaryMoipCard extends LitElement {
     }
     .picker { display: flex; flex-direction: column; }
     .now-playing.idle .art, .now-playing.idle .meta { opacity: 0.55; }
+
+    /* Listening Space session rows (source-first card targets Spaces) */
+    .sprow {
+      --row-accent: var(--primary-color);
+      border: 1px solid var(--divider-color); border-left: 3px solid var(--row-accent);
+      border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .sprow-head { display: flex; align-items: center; gap: 8px; }
+    .sprow-head .sp-icon { color: var(--row-accent); }
+    .sprow-name { flex: 1; font-weight: 600; }
+    .presets { display: flex; border: 1px solid var(--divider-color); border-radius: 8px; overflow: hidden; }
+    .preset { flex: 1; padding: 6px; background: none; border: none; border-right: 1px solid var(--divider-color); cursor: pointer; color: var(--primary-text-color); text-transform: capitalize; font-size: 0.9rem; }
+    .preset:last-child { border-right: none; }
+    .preset.on { background: var(--row-accent); color: #fff; }
+    .expand { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; background: none; border: none; color: var(--primary-color); cursor: pointer; padding: 0; font-size: 0.9rem; }
     .picker-head {
       display: flex; align-items: center; gap: 6px;
       font-weight: 500; color: var(--primary-text-color);
