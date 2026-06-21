@@ -280,27 +280,32 @@ export class BinaryMoipSpacesCard extends LitElement {
     `;
   }
 
-  /** "select" view: a list of Spaces up top, one detail panel below that swaps. */
+  /** "select" view: a horizontal tile rail of Spaces, one detail panel below. */
   private _renderSelect() {
     const sel =
       this._spaces.find((s) => s.id === this._selectedSpace) ?? this._spaces[0];
     return html`
-      <div class="sellist">
-        ${this._spaces.map((s) => this._renderSelectRow(s, sel?.id === s.id))}
+      <div class="srail ha-scrollbar">
+        ${this._spaces.map((s) => this._renderTile(s, sel?.id === s.id))}
       </div>
       ${sel ? this._renderDetail(sel) : nothing}
     `;
   }
 
-  private _renderSelectRow(s: WsSpace, selected: boolean) {
-    const status = s.active
-      ? `${s.level ?? "on"}${s.source ? " · " + (this._inputName(s.source) ?? "") : ""}`
-      : "Off";
+  private _renderTile(s: WsSpace, selected: boolean) {
+    const lbl = s.label ? this.hass.labels?.[s.label] : undefined;
+    const icon = lbl?.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off");
+    const accent = lbl?.color ? `--stile-accent: var(--${lbl.color}-color);` : "";
+    const status = s.active ? s.level ?? "on" : "Off";
     return html`
-      <button class="selrow ${selected ? "sel" : ""}" @click=${() => (this._selectedSpace = s.id)}>
-        <span class="dot ${s.active ? "on" : ""}"></span>
-        <span class="sname">${s.name}</span>
-        <span class="status">${status}</span>
+      <button class="stile ${selected ? "sel" : ""} ${s.active ? "active" : ""}"
+        style=${accent} @click=${() => (this._selectedSpace = s.id)}>
+        <div class="stile-top">
+          <ha-icon icon=${icon}></ha-icon>
+          ${s.active ? html`<span class="dot on"></span>` : nothing}
+        </div>
+        <div class="stile-name">${s.name}</div>
+        <div class="stile-sub">${status}</div>
       </button>
     `;
   }
@@ -569,14 +574,22 @@ export class BinaryMoipSpacesCard extends LitElement {
     .space { border: 1px solid var(--divider-color); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     .space.active { border-color: var(--primary-color); }
 
-    /* select (master-detail) view: list of rows + one detail panel below */
-    .sellist { display: flex; flex-direction: column; gap: 6px; }
-    .selrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--divider-color); background: none; cursor: pointer; color: var(--primary-text-color); font-size: 1rem; text-align: left; }
-    .selrow.sel { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
-    .selrow .sname { flex: 0 0 auto; font-weight: 600; }
-    .selrow .status { flex: 1; color: var(--secondary-text-color); font-size: 0.85rem; text-transform: capitalize; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* select (master-detail) view: horizontal tile rail + one detail panel below */
+    .srail { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .stile {
+      --stile-accent: var(--primary-color);
+      flex: 0 0 auto; width: 116px; text-align: left; padding: 8px 10px;
+      border-radius: 12px; border: 1px solid var(--divider-color);
+      background: none; color: var(--primary-text-color); cursor: pointer;
+    }
+    .stile.active { border-color: var(--stile-accent); }
+    .stile.sel { outline: 2px solid var(--stile-accent); outline-offset: -2px; }
+    .stile-top { display: flex; align-items: center; justify-content: space-between; }
+    .stile-top ha-icon { color: var(--stile-accent); }
+    .stile-name { font-weight: 600; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stile-sub { color: var(--secondary-text-color); font-size: 0.8rem; text-transform: capitalize; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--disabled-text-color, #888); flex: 0 0 auto; }
-    .dot.on { background: var(--primary-color); }
+    .dot.on { background: var(--stile-accent); }
     .space.detail { margin-top: 4px; }
     .shead { display: flex; align-items: center; gap: 8px; }
     .shead ha-icon { color: var(--primary-color); }

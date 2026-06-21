@@ -51,12 +51,20 @@ export interface RegistryFloor {
   level?: number | null;
 }
 
+export interface RegistryLabel {
+  label_id: string;
+  name: string;
+  color?: string | null;
+  icon?: string | null;
+}
+
 export interface HomeAssistant {
   states: Record<string, HassEntity>;
   entities?: Record<string, RegistryEntity>;
   devices?: Record<string, RegistryDevice>;
   areas?: Record<string, RegistryArea>;
   floors?: Record<string, RegistryFloor>;
+  labels?: Record<string, RegistryLabel>;
   callService(
     domain: string,
     service: string,

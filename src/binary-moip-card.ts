@@ -13,6 +13,7 @@ import {
   LibrarySource,
   ServiceCall,
   StreamSource,
+  WsSpace,
 } from "./types";
 import {
   areaPictureForEntity,
@@ -34,6 +35,7 @@ import {
   playItemCall,
   sessionZoneIds,
   sourceHasTransport,
+  spacesWsMsg,
   zoneInScope,
   transportCall,
   unjoinCall,
@@ -83,6 +85,8 @@ export class BinaryMoipCard extends LitElement {
   @state() private _pendingMaster: Record<string, number> = {}; // input -> pct
   @state() private _pendingMembers: Record<string, Record<string, boolean>> = {}; // input -> zone -> in?
   @state() private _showSourceVol = false;
+  @state() private _spacesList: WsSpace[] = []; // for the "add Spaces" picker
+  private _spacesFetched = false;
 
   public setConfig(config: CardConfig): void {
     if (!config || !Array.isArray(config.inputs) || config.inputs.length === 0) {
@@ -258,6 +262,13 @@ export class BinaryMoipCard extends LitElement {
 
   /** Drop optimistic state once hass reflects it (called after each render). */
   protected override updated(): void {
+    if (this.hass && !this._spacesFetched) {
+      this._spacesFetched = true;
+      this.hass
+        .callWS<{ spaces: WsSpace[] }>(spacesWsMsg())
+        .then((r) => (this._spacesList = r.spaces ?? []))
+        .catch(() => undefined);
+    }
     let vol = this._pendingVol;
     let changed = false;
     for (const [id, p] of Object.entries(vol)) {
@@ -333,6 +344,13 @@ export class BinaryMoipCard extends LitElement {
       [input.entity]: { ...cur, [zid]: want },
     };
     this._run(want ? joinCall(input.entity, zid) : unjoinCall(zid));
+  }
+
+  /** Add/remove a whole Space's zones to the input in one tap. */
+  private _setSpace(input: InputConfig, space: WsSpace, want: boolean): void {
+    for (const z of space.zones) {
+      if (z.entity_id) this._setMember(input, z.entity_id, want);
+    }
   }
 
   protected override render(): TemplateResult | typeof nothing {
@@ -745,6 +763,29 @@ export class BinaryMoipCard extends LitElement {
             <ha-icon icon="mdi:check"></ha-icon>
           </button>
         </div>
+        ${this._spacesList.length
+          ? html`
+              <div class="picker-group">Spaces</div>
+              <div class="space-chips">
+                ${this._spacesList.map((sp) => {
+                  const zids = sp.zones
+                    .map((z) => z.entity_id)
+                    .filter((e): e is string => !!e);
+                  const allIn = zids.length > 0 && zids.every((e) => inSession.has(e));
+                  const lbl = sp.label ? this.hass.labels?.[sp.label] : undefined;
+                  const accent = lbl?.color ? `--chip-accent: var(--${lbl.color}-color);` : "";
+                  return html`
+                    <button class="space-chip ${allIn ? "on" : ""}" style=${accent}
+                      @click=${() => this._setSpace(input, sp, !allIn)}>
+                      <ha-icon icon=${lbl?.icon || "mdi:speaker-multiple"}></ha-icon>
+                      <span>${sp.name}</span>
+                      ${allIn ? html`<ha-icon class="x" icon="mdi:close"></ha-icon>` : nothing}
+                    </button>
+                  `;
+                })}
+              </div>
+            `
+          : nothing}
         ${groups.map(
           (g) => html`
             <div class="picker-group">${g.label}</div>
@@ -985,6 +1026,16 @@ export class BinaryMoipCard extends LitElement {
       margin-top: 8px; font-size: 0.8rem; text-transform: uppercase;
       letter-spacing: 0.05em; color: var(--secondary-text-color);
     }
+    .space-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .space-chip {
+      --chip-accent: var(--primary-color);
+      display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px;
+      border-radius: 16px; border: 1px solid var(--divider-color);
+      background: none; color: var(--primary-text-color); cursor: pointer;
+    }
+    .space-chip.on { background: var(--chip-accent); color: #fff; border-color: transparent; }
+    .space-chip ha-icon { --mdc-icon-size: 18px; }
+    .space-chip .x { --mdc-icon-size: 16px; }
     .picker-row, .preset-row {
       display: flex; align-items: center; gap: 8px; padding: 6px 0;
       color: var(--primary-text-color); cursor: pointer;
