@@ -126,7 +126,7 @@ var at=Object.defineProperty;var ct=Object.getOwnPropertyDescriptor;var h=(s,i,e
     .save-big { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 10px; border: none; background: var(--primary-color); color: #fff; cursor: pointer; font-size: 1rem; }
     .nav { display: flex; gap: 8px; }
     input[type="range"] { accent-color: var(--primary-color); }
-  `,h([A({attribute:!1})],b.prototype,"hass",2),h([u()],b.prototype,"_config",2),h([u()],b.prototype,"_spaces",2),h([u()],b.prototype,"_error",2),h([u()],b.prototype,"_stage",2),h([u()],b.prototype,"_spaceId",2),h([u()],b.prototype,"_level",2),h([u()],b.prototype,"_refZone",2),h([u()],b.prototype,"_walkIdx",2),h([u()],b.prototype,"_mode",2),h([u()],b.prototype,"_refSpl",2),h([u()],b.prototype,"_pendingVol",2),b=h([O("binary-moip-calibration-card")],b);var Ct=["background","listening","party"];window.customCards=[...window.customCards??[],{type:"binary-moip-spaces-card",name:"Binary MoIP Listening Spaces",description:"Space-first whole-home audio: turn Spaces on at a level, master, fine-tune zones."}];var g=class extends y{constructor(){super(...arguments);this._spaces=[];this._error=null;this._expanded={};this._pendingMaster={};this._pendingVol={};this._pickerSpace=null;this._openSource=null;this._nav=[];this._children=null;this._browseLoading=!1;this._browseError=null;this._connectHint=null;this._sourceVolSpace=null;this._selectedSpace=null;this._fetched=!1}get _sources(){return this._config.sources??re}_sourceInput(e){return this._inputs.find(t=>t.entity===e.source)}setConfig(e){this._config=e}getCardSize(){return 6}static getStubConfig(){return{type:"custom:binary-moip-spaces-card",inputs:[]}}updated(){this.hass&&!this._fetched&&(this._fetched=!0,this._fetchSpaces());let e=this._pendingVol,t=!1;for(let[n,r]of Object.entries(e)){let o=this.hass.states[n];o&&$(o.attributes.volume_level)===r&&(t||(e={...e},t=!0),delete e[n])}t&&(this._pendingVol=e)}async _fetchSpaces(){try{let e=await this.hass.callWS(de());this._spaces=e.spaces??[],this._error=null}catch{this._error="Couldn't read Listening Spaces from the integration."}}async _run(e){await this.hass.callService(e.domain,e.service,e.data)}async _runRefresh(e){await this._run(e),await this._fetchSpaces()}get _inputs(){return this._config.inputs??[]}_inputName(e){return this._inputs.find(t=>t.entity===e)?.name}_clearMaster(e){if(e in this._pendingMaster){let t={...this._pendingMaster};delete t[e],this._pendingMaster=t}}async _activate(e,t,n){let r=n??e.level??"listening",o=e.master_positions?.[r];o!=null&&(this._pendingMaster={...this._pendingMaster,[e.id]:Math.round(o)}),await this._runRefresh(nt(e.id,{source:t,level:r})),this._clearMaster(e.id)}_deactivate(e){this._clearMaster(e.id),this._runRefresh(pe(e.id))}async _setLevel(e,t){let n=e.master_positions?.[t];n!=null&&(this._pendingMaster={...this._pendingMaster,[e.id]:Math.round(n)}),await this._runRefresh(st(e.id,t)),this._clearMaster(e.id)}async _setMaster(e,t,n){this._pendingMaster={...this._pendingMaster,[e.id]:t},n&&(await this._runRefresh(rt(e.id,t)),this._clearMaster(e.id))}_volPct(e){return this._pendingVol[e]??$(this.hass.states[e]?.attributes.volume_level)}_setZoneVol(e,t,n){this._pendingVol={...this._pendingVol,[e]:t},n&&this._run(I(e,t/100))}_zoneToggle(e,t,n){this._runRefresh(ot(e.id,t.group_id,n?"on":"off"))}_resetPicker(){this._pickerSpace=null,this._openSource=null,this._nav=[],this._children=null,this._browseError=null,this._connectHint=null}_openPicker(e){this._resetPicker(),this._pickerSpace=e.id}async _loadChildren(e,t){this._children=null,this._browseLoading=!0,this._browseError=null;try{let n=await this.hass.callWS(le(e,t?.media_content_id,t?.media_content_type));this._children=n.children??[]}catch{this._browseError="Couldn't reach Music Assistant.",this._children=[]}finally{this._browseLoading=!1}}_selectSourceList(){this._openSource=null,this._nav=[],this._children=null,this._connectHint=null}_selectSource(e,t){this._openSource=t,this._nav=[],this._children=null,this._connectHint=null,oe(this._sources[t])&&(this._connectHint=`Cast from your Spotify app to ${e.name}.`)}_browseInto(e,t){e.ma_player&&(this._nav=[...this._nav,t],this._loadChildren(e.ma_player,t))}_navBack(e){let t=this._nav.slice(0,-1);this._nav=t,this._children=null,t.length&&e.ma_player&&this._loadChildren(e.ma_player,t[t.length-1])}_onItem(e,t){t.can_play&&e.ma_player?(this._run(ce(e.ma_player,t.media_content_id)),this._resetPicker()):t.can_expand&&this._browseInto(e,t)}render(){if(!this.hass||!this._config)return d;let e=this._spaces.length?this._config.view==="select"?this._spaces.map(t=>this._renderSelectRow(t)):this._spaces.map(t=>this._renderSpace(t)):a`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`;return a`
+  `,h([A({attribute:!1})],b.prototype,"hass",2),h([u()],b.prototype,"_config",2),h([u()],b.prototype,"_spaces",2),h([u()],b.prototype,"_error",2),h([u()],b.prototype,"_stage",2),h([u()],b.prototype,"_spaceId",2),h([u()],b.prototype,"_level",2),h([u()],b.prototype,"_refZone",2),h([u()],b.prototype,"_walkIdx",2),h([u()],b.prototype,"_mode",2),h([u()],b.prototype,"_refSpl",2),h([u()],b.prototype,"_pendingVol",2),b=h([O("binary-moip-calibration-card")],b);var Ct=["background","listening","party"];window.customCards=[...window.customCards??[],{type:"binary-moip-spaces-card",name:"Binary MoIP Listening Spaces",description:"Space-first whole-home audio: turn Spaces on at a level, master, fine-tune zones."}];var g=class extends y{constructor(){super(...arguments);this._spaces=[];this._error=null;this._expanded={};this._pendingMaster={};this._pendingVol={};this._pickerSpace=null;this._openSource=null;this._nav=[];this._children=null;this._browseLoading=!1;this._browseError=null;this._connectHint=null;this._sourceVolSpace=null;this._selectedSpace=null;this._fetched=!1}get _sources(){return this._config.sources??re}_sourceInput(e){return this._inputs.find(t=>t.entity===e.source)}setConfig(e){this._config=e}getCardSize(){return 6}static getStubConfig(){return{type:"custom:binary-moip-spaces-card",inputs:[]}}updated(){this.hass&&!this._fetched&&(this._fetched=!0,this._fetchSpaces());let e=this._pendingVol,t=!1;for(let[n,r]of Object.entries(e)){let o=this.hass.states[n];o&&$(o.attributes.volume_level)===r&&(t||(e={...e},t=!0),delete e[n])}t&&(this._pendingVol=e)}async _fetchSpaces(){try{let e=await this.hass.callWS(de());this._spaces=e.spaces??[],this._error=null}catch{this._error="Couldn't read Listening Spaces from the integration."}}async _run(e){await this.hass.callService(e.domain,e.service,e.data)}async _runRefresh(e){await this._run(e),await this._fetchSpaces()}get _inputs(){return this._config.inputs??[]}_inputName(e){return this._inputs.find(t=>t.entity===e)?.name}_clearMaster(e){if(e in this._pendingMaster){let t={...this._pendingMaster};delete t[e],this._pendingMaster=t}}async _activate(e,t,n){let r=n??e.level??"listening",o=e.master_positions?.[r];o!=null&&(this._pendingMaster={...this._pendingMaster,[e.id]:Math.round(o)}),await this._runRefresh(nt(e.id,{source:t,level:r})),this._clearMaster(e.id)}_deactivate(e){this._clearMaster(e.id),this._runRefresh(pe(e.id))}async _setLevel(e,t){let n=e.master_positions?.[t];n!=null&&(this._pendingMaster={...this._pendingMaster,[e.id]:Math.round(n)}),await this._runRefresh(st(e.id,t)),this._clearMaster(e.id)}async _setMaster(e,t,n){this._pendingMaster={...this._pendingMaster,[e.id]:t},n&&(await this._runRefresh(rt(e.id,t)),this._clearMaster(e.id))}_volPct(e){return this._pendingVol[e]??$(this.hass.states[e]?.attributes.volume_level)}_setZoneVol(e,t,n){this._pendingVol={...this._pendingVol,[e]:t},n&&this._run(I(e,t/100))}_zoneToggle(e,t,n){this._runRefresh(ot(e.id,t.group_id,n?"on":"off"))}_resetPicker(){this._pickerSpace=null,this._openSource=null,this._nav=[],this._children=null,this._browseError=null,this._connectHint=null}_openPicker(e){this._resetPicker(),this._pickerSpace=e.id}async _loadChildren(e,t){this._children=null,this._browseLoading=!0,this._browseError=null;try{let n=await this.hass.callWS(le(e,t?.media_content_id,t?.media_content_type));this._children=n.children??[]}catch{this._browseError="Couldn't reach Music Assistant.",this._children=[]}finally{this._browseLoading=!1}}_selectSourceList(){this._openSource=null,this._nav=[],this._children=null,this._connectHint=null}_selectSource(e,t){this._openSource=t,this._nav=[],this._children=null,this._connectHint=null,oe(this._sources[t])&&(this._connectHint=`Cast from your Spotify app to ${e.name}.`)}_browseInto(e,t){e.ma_player&&(this._nav=[...this._nav,t],this._loadChildren(e.ma_player,t))}_navBack(e){let t=this._nav.slice(0,-1);this._nav=t,this._children=null,t.length&&e.ma_player&&this._loadChildren(e.ma_player,t[t.length-1])}_onItem(e,t){t.can_play&&e.ma_player?(this._run(ce(e.ma_player,t.media_content_id)),this._resetPicker()):t.can_expand&&this._browseInto(e,t)}render(){if(!this.hass||!this._config)return d;let e=this._spaces.length?this._config.view==="select"?this._renderSelect():this._spaces.map(t=>this._renderSpace(t)):a`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`;return a`
       <ha-card>
         ${this._config.title?a`<h1 class="card-header">${this._config.title}</h1>`:d}
         <div class="content">
@@ -146,25 +146,28 @@ var at=Object.defineProperty;var ct=Object.getOwnPropertyDescriptor;var h=(s,i,e
         ${e.active?this._renderActive(e,t):this._renderOff(e)}
         ${e.active?this._renderZonesBlock(e):d}
       </div>
-    `}_renderSelectRow(e){let t=this._selectedSpace===e.id,n=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0),r=e.active?`${e.level??"on"}${e.source?" \xB7 "+(this._inputName(e.source)??""):""}`:"Off";return a`
-      <div class="space ${e.active?"active":""} ${t?"open":""}">
-        <button class="selrow" @click=${()=>this._selectedSpace=t?null:e.id}>
-          <span class="dot ${e.active?"on":""}"></span>
+    `}_renderSelect(){let e=this._spaces.find(t=>t.id===this._selectedSpace)??this._spaces[0];return a`
+      <div class="sellist">
+        ${this._spaces.map(t=>this._renderSelectRow(t,e?.id===t.id))}
+      </div>
+      ${e?this._renderDetail(e):d}
+    `}_renderSelectRow(e,t){let n=e.active?`${e.level??"on"}${e.source?" \xB7 "+(this._inputName(e.source)??""):""}`:"Off";return a`
+      <button class="selrow ${t?"sel":""}" @click=${()=>this._selectedSpace=e.id}>
+        <span class="dot ${e.active?"on":""}"></span>
+        <span class="sname">${e.name}</span>
+        <span class="status">${n}</span>
+      </button>
+    `}_renderDetail(e){let t=this._pendingMaster[e.id]??(e.master!=null?Math.round(e.master):0);return a`
+      <div class="space detail ${e.active?"active":""}">
+        <div class="shead">
+          <ha-icon icon=${e.active?"mdi:speaker-multiple":"mdi:speaker-off"}></ha-icon>
           <span class="sname">${e.name}</span>
-          <span class="status">${r}</span>
-          <ha-icon class="chev" icon=${t?"mdi:chevron-up":"mdi:chevron-down"}></ha-icon>
-        </button>
-        ${t?a`<div class="detail">
-              <div class="shead">
-                <ha-icon icon=${e.active?"mdi:speaker-multiple":"mdi:speaker-off"}></ha-icon>
-                <span class="sname">${e.name}</span>
-                ${e.active?a`<button class="icon-btn" title="Turn off" @click=${()=>this._deactivate(e)}>
-                      <ha-icon icon="mdi:power"></ha-icon>
-                    </button>`:d}
-              </div>
-              ${e.active?this._renderActive(e,n):this._renderOff(e)}
-              ${e.active?this._renderZonesBlock(e):d}
-            </div>`:d}
+          ${e.active?a`<button class="icon-btn" title="Turn off" @click=${()=>this._deactivate(e)}>
+                <ha-icon icon="mdi:power"></ha-icon>
+              </button>`:d}
+        </div>
+        ${e.active?this._renderActive(e,t):this._renderOff(e)}
+        ${e.active?this._renderZonesBlock(e):d}
       </div>
     `}_renderZonesBlock(e){return a`
       <button class="expand" @click=${()=>this._expanded={...this._expanded,[e.id]:!this._expanded[e.id]}}>
@@ -294,15 +297,15 @@ var at=Object.defineProperty;var ct=Object.getOwnPropertyDescriptor;var h=(s,i,e
     .space { border: 1px solid var(--divider-color); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     .space.active { border-color: var(--primary-color); }
 
-    /* select (master-detail) view */
-    .space:has(.selrow) { padding: 0; gap: 0; }
-    .selrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; background: none; border: none; cursor: pointer; color: var(--primary-text-color); font-size: 1rem; }
+    /* select (master-detail) view: list of rows + one detail panel below */
+    .sellist { display: flex; flex-direction: column; gap: 6px; }
+    .selrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--divider-color); background: none; cursor: pointer; color: var(--primary-text-color); font-size: 1rem; text-align: left; }
+    .selrow.sel { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
     .selrow .sname { flex: 0 0 auto; font-weight: 600; }
-    .selrow .status { flex: 1; text-align: left; color: var(--secondary-text-color); font-size: 0.85rem; text-transform: capitalize; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .selrow .chev { color: var(--secondary-text-color); flex: 0 0 auto; }
+    .selrow .status { flex: 1; color: var(--secondary-text-color); font-size: 0.85rem; text-transform: capitalize; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--disabled-text-color, #888); flex: 0 0 auto; }
     .dot.on { background: var(--primary-color); }
-    .detail { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+    .space.detail { margin-top: 4px; }
     .shead { display: flex; align-items: center; gap: 8px; }
     .shead ha-icon { color: var(--primary-color); }
     .sname { flex: 1; font-weight: 600; font-size: 1.05rem; }
@@ -369,7 +372,7 @@ var at=Object.defineProperty;var ct=Object.getOwnPropertyDescriptor;var h=(s,i,e
         </div>
       </ha-card>
     `}_renderRail(e){return a`
-      <div class="rail">
+      <div class="rail ha-scrollbar">
         ${this._config.inputs.map(t=>{let n=this._src(t),r=Ge(n),o=t.kind==="stream",l=o?this._currentSource(t).label:t.name,c=o?t.name:"Line-in",p=t.icon??(o?"mdi:cast-audio":"mdi:music-box-outline"),m=e&&t.entity===e.entity;return a`
             <button
               class="tile ${m?"selected":""}"

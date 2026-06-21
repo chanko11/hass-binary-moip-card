@@ -371,7 +371,7 @@ export class BinaryMoipCard extends LitElement {
 
   private _renderRail(selected: InputConfig | undefined) {
     return html`
-      <div class="rail">
+      <div class="rail ha-scrollbar">
         ${this._config.inputs.map((input) => {
           const src = this._src(input);
           const active = isSourceActive(src);
