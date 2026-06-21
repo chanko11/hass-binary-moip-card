@@ -190,6 +190,9 @@ export interface SpacesCardConfig {
   inputs?: InputConfig[];
   /** Change-source picker siblings (MA library / Spotify Connect). Default DEFAULT_SOURCES. */
   sources?: StreamSource[];
+  /** "all" (default): every Space expanded. "select": compact status rows, tap one
+   *  to reveal its full controls (master-detail). */
+  view?: "all" | "select";
   title?: string;
 }
 

@@ -62,6 +62,7 @@ export class BinaryMoipSpacesCard extends LitElement {
   @state() private _browseError: string | null = null;
   @state() private _connectHint: string | null = null;
   @state() private _sourceVolSpace: string | null = null; // space id whose source-vol panel is open
+  @state() private _selectedSpace: string | null = null; // master-detail selection ("select" view)
   private _fetched = false;
 
   private get _sources(): StreamSource[] {
@@ -243,19 +244,23 @@ export class BinaryMoipSpacesCard extends LitElement {
 
   protected override render(): TemplateResult | typeof nothing {
     if (!this.hass || !this._config) return nothing;
+    const body = !this._spaces.length
+      ? html`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`
+      : this._config.view === "select"
+        ? this._spaces.map((s) => this._renderSelectRow(s))
+        : this._spaces.map((s) => this._renderSpace(s));
     return html`
       <ha-card>
         ${this._config.title ? html`<h1 class="card-header">${this._config.title}</h1>` : nothing}
         <div class="content">
           ${this._error ? html`<div class="note">${this._error}</div>` : nothing}
-          ${this._spaces.length
-            ? this._spaces.map((s) => this._renderSpace(s))
-            : html`<div class="note">No Listening Spaces yet — create one in the integration options.</div>`}
+          ${body}
         </div>
       </ha-card>
     `;
   }
 
+  /** "all" view: a Space fully expanded. */
   private _renderSpace(s: WsSpace) {
     const master = this._pendingMaster[s.id] ?? (s.master != null ? Math.round(s.master) : 0);
     return html`
@@ -269,20 +274,57 @@ export class BinaryMoipSpacesCard extends LitElement {
               </button>`
             : nothing}
         </div>
-
         ${s.active ? this._renderActive(s, master) : this._renderOff(s)}
+        ${s.active ? this._renderZonesBlock(s) : nothing}
+      </div>
+    `;
+  }
 
-        ${s.active
-          ? html`<button class="expand" @click=${() =>
-              (this._expanded = { ...this._expanded, [s.id]: !this._expanded[s.id] })}>
-              <ha-icon icon=${this._expanded[s.id] ? "mdi:chevron-up" : "mdi:chevron-down"}></ha-icon>
-              ${this._expanded[s.id] ? "Hide zones" : "Zones"}
-            </button>`
-          : nothing}
-        ${s.active && this._expanded[s.id]
-          ? html`<div class="zones">${s.zones.map((z) => this._renderZone(s, z))}</div>`
+  /** "select" view: a compact status row that reveals full controls when chosen. */
+  private _renderSelectRow(s: WsSpace) {
+    const open = this._selectedSpace === s.id;
+    const master = this._pendingMaster[s.id] ?? (s.master != null ? Math.round(s.master) : 0);
+    const status = s.active
+      ? `${s.level ?? "on"}${s.source ? " · " + (this._inputName(s.source) ?? "") : ""}`
+      : "Off";
+    return html`
+      <div class="space ${s.active ? "active" : ""} ${open ? "open" : ""}">
+        <button class="selrow" @click=${() => (this._selectedSpace = open ? null : s.id)}>
+          <span class="dot ${s.active ? "on" : ""}"></span>
+          <span class="sname">${s.name}</span>
+          <span class="status">${status}</span>
+          <ha-icon class="chev" icon=${open ? "mdi:chevron-up" : "mdi:chevron-down"}></ha-icon>
+        </button>
+        ${open
+          ? html`<div class="detail">
+              <div class="shead">
+                <ha-icon icon=${s.active ? "mdi:speaker-multiple" : "mdi:speaker-off"}></ha-icon>
+                <span class="sname">${s.name}</span>
+                ${s.active
+                  ? html`<button class="icon-btn" title="Turn off" @click=${() => this._deactivate(s)}>
+                      <ha-icon icon="mdi:power"></ha-icon>
+                    </button>`
+                  : nothing}
+              </div>
+              ${s.active ? this._renderActive(s, master) : this._renderOff(s)}
+              ${s.active ? this._renderZonesBlock(s) : nothing}
+            </div>`
           : nothing}
       </div>
+    `;
+  }
+
+  /** The expand→zones block (shared by both views). */
+  private _renderZonesBlock(s: WsSpace) {
+    return html`
+      <button class="expand" @click=${() =>
+        (this._expanded = { ...this._expanded, [s.id]: !this._expanded[s.id] })}>
+        <ha-icon icon=${this._expanded[s.id] ? "mdi:chevron-up" : "mdi:chevron-down"}></ha-icon>
+        ${this._expanded[s.id] ? "Hide zones" : "Zones"}
+      </button>
+      ${this._expanded[s.id]
+        ? html`<div class="zones">${s.zones.map((z) => this._renderZone(s, z))}</div>`
+        : nothing}
     `;
   }
 
@@ -515,6 +557,16 @@ export class BinaryMoipSpacesCard extends LitElement {
 
     .space { border: 1px solid var(--divider-color); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     .space.active { border-color: var(--primary-color); }
+
+    /* select (master-detail) view */
+    .space:has(.selrow) { padding: 0; gap: 0; }
+    .selrow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; background: none; border: none; cursor: pointer; color: var(--primary-text-color); font-size: 1rem; }
+    .selrow .sname { flex: 0 0 auto; font-weight: 600; }
+    .selrow .status { flex: 1; text-align: left; color: var(--secondary-text-color); font-size: 0.85rem; text-transform: capitalize; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .selrow .chev { color: var(--secondary-text-color); flex: 0 0 auto; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--disabled-text-color, #888); flex: 0 0 auto; }
+    .dot.on { background: var(--primary-color); }
+    .detail { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
     .shead { display: flex; align-items: center; gap: 8px; }
     .shead ha-icon { color: var(--primary-color); }
     .sname { flex: 1; font-weight: 600; font-size: 1.05rem; }
