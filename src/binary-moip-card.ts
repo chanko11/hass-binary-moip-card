@@ -313,11 +313,18 @@ export class BinaryMoipCard extends LitElement {
   private _renderSpaceRow(s: WsSpace) {
     const expanded = this._expandedSpace === s.id;
     const accent = s.color ? `--row-accent: var(--${s.color}-color);` : "";
+    const off = s.offline_zones ?? 0;
+    const allOff = off > 0 && off === (s.zones_total ?? s.zones.length);
     return html`
-      <div class="sprow" style=${accent}>
+      <div class="sprow ${allOff ? "alloff" : ""}" style=${accent}>
         <div class="sprow-head">
           <ha-icon class="sp-icon" icon=${s.icon || "mdi:speaker-multiple"}></ha-icon>
           <span class="sprow-name">${s.name}</span>
+          ${off
+            ? html`<span class="offbadge" title="${off} of ${s.zones_total} zones offline (amp unreachable)">
+                <ha-icon icon="mdi:cloud-off-outline"></ha-icon>${allOff ? "offline" : off}
+              </span>`
+            : nothing}
           <button class="icon-btn" title="Turn off" @click=${() => this._runSpace(spaceDeactivateCall(s.id))}>
             <ha-icon icon="mdi:power"></ha-icon>
           </button>
@@ -364,6 +371,15 @@ export class BinaryMoipCard extends LitElement {
 
   private _renderSpaceZone(s: WsSpace, z: WsZone) {
     const eid = z.entity_id;
+    if (z.online === false) {
+      return html`
+        <div class="row offline">
+          <ha-icon class="off-ic" icon="mdi:cloud-off-outline"></ha-icon>
+          <span class="row-name">${z.name}</span>
+          <span class="off-tag">Amp offline</span>
+        </div>
+      `;
+    }
     const value = eid ? this._volPct(eid) : 0;
     const on = eid ? this.hass.states[eid]?.attributes.source !== "None" : false;
     const muted = eid ? !!this.hass.states[eid]?.attributes.is_volume_muted : false;
@@ -909,6 +925,21 @@ export class BinaryMoipCard extends LitElement {
     .sprow-head { display: flex; align-items: center; gap: 8px; }
     .sprow-head .sp-icon { color: var(--row-accent); }
     .sprow-name { flex: 1; font-weight: 600; }
+    .sprow.alloff .sprow-name { color: var(--secondary-text-color); }
+    .offbadge {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+      color: var(--error-color); background: color-mix(in srgb, var(--error-color) 14%, transparent);
+      border-radius: 10px; padding: 1px 7px 1px 5px;
+    }
+    .offbadge ha-icon { --mdc-icon-size: 15px; }
+    .row.offline { opacity: 0.72; }
+    .row.offline .off-ic { color: var(--error-color); }
+    .row.offline .row-name { color: var(--secondary-text-color); }
+    .off-tag {
+      margin-left: auto; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+      color: var(--error-color);
+    }
     .presets { display: flex; border: 1px solid var(--divider-color); border-radius: 8px; overflow: hidden; }
     .preset { flex: 1; padding: 6px; background: none; border: none; border-right: 1px solid var(--divider-color); cursor: pointer; color: var(--primary-text-color); text-transform: capitalize; font-size: 0.9rem; }
     .preset:last-child { border-right: none; }

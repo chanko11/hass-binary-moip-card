@@ -269,6 +269,7 @@ export class BinaryMoipSpacesCard extends LitElement {
         <div class="shead">
           <ha-icon class="shead-icon" icon=${s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off")}></ha-icon>
           <span class="sname">${s.name}</span>
+          ${this._offBadge(s)}
           ${s.active
             ? html`<button class="icon-btn" title="Turn off" @click=${() => this._deactivate(s)}>
                 <ha-icon icon="mdi:power"></ha-icon>
@@ -293,19 +294,34 @@ export class BinaryMoipSpacesCard extends LitElement {
     `;
   }
 
+  /** Offline badge for a space header/tile, or nothing when all amps reachable. */
+  private _offBadge(s: WsSpace) {
+    const off = s.offline_zones ?? 0;
+    if (!off) return nothing;
+    const allOff = off === (s.zones_total ?? s.zones.length);
+    return html`<span class="offbadge" title="${off} of ${s.zones_total} zones offline (amp unreachable)">
+      <ha-icon icon="mdi:cloud-off-outline"></ha-icon>${allOff ? "offline" : off}</span>`;
+  }
+
   private _renderTile(s: WsSpace, selected: boolean) {
     const icon = s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off");
     const accent = s.color ? `--stile-accent: var(--${s.color}-color);` : "";
-    const status = s.active ? s.level ?? "on" : "Off";
+    const off = s.offline_zones ?? 0;
+    const allOff = off > 0 && off === (s.zones_total ?? s.zones.length);
+    const status = allOff ? "Offline" : off ? `${off} offline` : s.active ? s.level ?? "on" : "Off";
     return html`
-      <button class="stile ${selected ? "sel" : ""} ${s.active ? "active" : ""}"
+      <button class="stile ${selected ? "sel" : ""} ${s.active ? "active" : ""} ${off ? "hasoff" : ""}"
         style=${accent} @click=${() => (this._selectedSpace = s.id)}>
         <div class="stile-top">
           <ha-icon icon=${icon}></ha-icon>
-          ${s.active ? html`<span class="dot on"></span>` : nothing}
+          ${off
+            ? html`<ha-icon class="tile-off" icon="mdi:cloud-off-outline"></ha-icon>`
+            : s.active
+              ? html`<span class="dot on"></span>`
+              : nothing}
         </div>
         <div class="stile-name">${s.name}</div>
-        <div class="stile-sub">${status}</div>
+        <div class="stile-sub ${off ? "off" : ""}">${status}</div>
       </button>
     `;
   }
@@ -319,6 +335,7 @@ export class BinaryMoipSpacesCard extends LitElement {
         <div class="shead">
           <ha-icon class="shead-icon" icon=${s.icon || (s.active ? "mdi:speaker-multiple" : "mdi:speaker-off")}></ha-icon>
           <span class="sname">${s.name}</span>
+          ${this._offBadge(s)}
           ${s.active
             ? html`<button class="icon-btn" title="Turn off" @click=${() => this._deactivate(s)}>
                 <ha-icon icon="mdi:power"></ha-icon>
@@ -541,6 +558,15 @@ export class BinaryMoipSpacesCard extends LitElement {
 
   private _renderZone(s: WsSpace, z: WsZone) {
     const eid = z.entity_id;
+    if (z.online === false) {
+      return html`
+        <div class="zone offline">
+          <ha-icon class="off-ic" icon="mdi:cloud-off-outline"></ha-icon>
+          <span class="zname">${z.name}</span>
+          <span class="off-tag">Amp offline</span>
+        </div>
+      `;
+    }
     const inSpace = eid ? !!this.hass.states[eid] : false;
     const value = eid ? this._volPct(eid) : 0;
     // A zone is "on" in the session if it's routed (has a source) — approximated
@@ -617,6 +643,20 @@ export class BinaryMoipSpacesCard extends LitElement {
     .zones { display: flex; flex-direction: column; gap: 6px; }
     .zone { display: flex; align-items: center; gap: 8px; }
     .zname { flex: 0 0 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .zone.offline { opacity: 0.72; }
+    .zone.offline .off-ic { color: var(--error-color); }
+    .zone.offline .zname { color: var(--secondary-text-color); flex: 1; }
+    .off-tag { margin-left: auto; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; color: var(--error-color); }
+    .offbadge {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+      color: var(--error-color); background: color-mix(in srgb, var(--error-color) 14%, transparent);
+      border-radius: 10px; padding: 1px 7px 1px 5px;
+    }
+    .offbadge ha-icon { --mdc-icon-size: 15px; }
+    .stile.hasoff { border-color: color-mix(in srgb, var(--error-color) 55%, var(--divider-color)); }
+    .stile-sub.off { color: var(--error-color); font-weight: 600; text-transform: none; }
+    .tile-off { color: var(--error-color); --mdc-icon-size: 18px; }
     .zone input[type="range"] { flex: 1; min-width: 0; }
 
     .icon-btn { background: none; border: none; cursor: pointer; color: var(--primary-text-color); padding: 4px; --mdc-icon-size: 22px; }

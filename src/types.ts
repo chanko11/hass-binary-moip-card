@@ -169,6 +169,8 @@ export interface WsZone {
   calibrated: boolean;
   current_native: number | null;
   bounds: [number | null, number | null];
+  /** False when the zone's amp is offline/unreachable (unconnected). */
+  online?: boolean;
 }
 
 /** A Listening Space, as returned by the binary_moip/spaces ws command. */
@@ -185,6 +187,9 @@ export interface WsSpace {
   level: string | null;
   source: string | null;
   zones: WsZone[];
+  /** How many of this space's zones have an offline amp (0 = all reachable). */
+  offline_zones?: number;
+  zones_total?: number;
 }
 
 export interface CalibrationCardConfig {
