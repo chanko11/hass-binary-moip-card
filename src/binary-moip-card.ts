@@ -32,6 +32,7 @@ import {
   spaceDeactivateCall,
   spaceSetLevelCall,
   spaceSetMasterCall,
+  spacesSubscribeMsg,
   spacesWsMsg,
   zoneSetCall,
   transportCall,
@@ -40,7 +41,7 @@ import {
 
 const SPACE_LEVELS = ["background", "listening", "party"] as const;
 
-const VERSION = "2.3.2";
+const VERSION = "2.4.0";
 /* eslint-disable no-console */
 console.info(
   `%c binary-moip-card %c ${VERSION} `,
@@ -83,7 +84,8 @@ export class BinaryMoipCard extends LitElement {
   @state() private _showAddSpaces = false;
   @state() private _expandedSpace: string | null = null;
   @state() private _pendingSpaceMaster: Record<string, number> = {}; // space id -> master
-  private _spacesFetched = false;
+  private _spacesSubscribed = false;
+  private _spacesUnsub?: () => void;
 
   public setConfig(config: CardConfig): void {
     if (!config || !Array.isArray(config.inputs) || config.inputs.length === 0) {
@@ -247,15 +249,63 @@ export class BinaryMoipCard extends LitElement {
 
   // --- optimistic UI helpers ------------------------------------------------
 
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    // Re-attached (dashboard navigation recreates the element): allow a fresh
+    // subscription. Without this the card would show the model as of first load.
+    this._spacesSubscribed = false;
+  }
+
+  public override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._spacesUnsub?.();
+    this._spacesUnsub = undefined;
+    this._spacesSubscribed = false;
+  }
+
+  /**
+   * Subscribe to the Listening Spaces model so its live fields stay current.
+   *
+   * The model carries `active`, `source` and per-zone `online`, which change
+   * whenever an amplifier does. Falls back to a one-shot read when the frontend
+   * exposes no raw connection, or when the integration predates the subscribe
+   * command.
+   */
+  private _subscribeSpaces(): void {
+    if (this._spacesSubscribed || !this.hass) return;
+    this._spacesSubscribed = true;
+
+    const conn = this.hass.connection;
+    if (!conn) {
+      this._fetchSpacesOnce();
+      return;
+    }
+    conn
+      .subscribeMessage<{ spaces: WsSpace[] }>(
+        (m) => (this._spacesList = m.spaces ?? []),
+        spacesSubscribeMsg()
+      )
+      .then((unsub) => {
+        // Detached while the subscribe was in flight — don't leak the listener.
+        if (this.isConnected) this._spacesUnsub = unsub;
+        else unsub();
+      })
+      .catch(() => {
+        this._spacesSubscribed = false;
+        this._fetchSpacesOnce();
+      });
+  }
+
+  private _fetchSpacesOnce(): void {
+    this.hass
+      .callWS<{ spaces: WsSpace[] }>(spacesWsMsg())
+      .then((r) => (this._spacesList = r.spaces ?? []))
+      .catch(() => undefined);
+  }
+
   /** Drop optimistic state once hass reflects it (called after each render). */
   protected override updated(): void {
-    if (this.hass && !this._spacesFetched) {
-      this._spacesFetched = true;
-      this.hass
-        .callWS<{ spaces: WsSpace[] }>(spacesWsMsg())
-        .then((r) => (this._spacesList = r.spaces ?? []))
-        .catch(() => undefined);
-    }
+    this._subscribeSpaces();
     let vol = this._pendingVol;
     let changed = false;
     for (const [id, p] of Object.entries(vol)) {

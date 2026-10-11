@@ -365,6 +365,13 @@ test("spacesWsMsg builds the read command", async () => {
   assert.deepEqual(spacesWsMsg(), { type: "binary_moip/spaces" });
 });
 
+test("spacesSubscribeMsg builds the subscribe command", async () => {
+  // Cards must subscribe, not poll: the model carries live fields (active,
+  // source, per-zone online) that go stale after a one-shot read.
+  const { spacesSubscribeMsg } = await import("../src/logic.ts");
+  assert.deepEqual(spacesSubscribeMsg(), { type: "binary_moip/spaces/subscribe" });
+});
+
 test("calibrationPlayCall: defaults + options", async () => {
   const { calibrationPlayCall } = await import("../src/logic.ts");
   assert.deepEqual(calibrationPlayCall("main_living"), {

@@ -72,6 +72,19 @@ export interface HomeAssistant {
   ): Promise<unknown>;
   /** Websocket call — used for media_player/browse_media. */
   callWS<T = unknown>(msg: Record<string, unknown>): Promise<T>;
+  /**
+   * Raw websocket connection, used for push subscriptions.
+   *
+   * Optional: absent on older frontends and on the partial `hass` objects used
+   * in tests, so callers must fall back to a one-shot `callWS`.
+   * `subscribeMessage` resolves to the unsubscribe callable.
+   */
+  connection?: {
+    subscribeMessage<T = unknown>(
+      callback: (message: T) => void,
+      msg: Record<string, unknown>
+    ): Promise<() => void>;
+  };
 }
 
 /** A node from media_player/browse_media (subset we use). */

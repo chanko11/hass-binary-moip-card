@@ -27,6 +27,7 @@ import {
   spaceDeactivateCall,
   spaceSetLevelCall,
   spaceSetMasterCall,
+  spacesSubscribeMsg,
   spacesWsMsg,
   transportCall,
   volumeSetCall,
@@ -63,7 +64,8 @@ export class BinaryMoipSpacesCard extends LitElement {
   @state() private _connectHint: string | null = null;
   @state() private _sourceVolSpace: string | null = null; // space id whose source-vol panel is open
   @state() private _selectedSpace: string | null = null; // master-detail selection ("select" view)
-  private _fetched = false;
+  private _subscribed = false;
+  private _unsub?: () => void;
 
   private get _sources(): StreamSource[] {
     return this._config.sources ?? DEFAULT_SOURCES;
@@ -83,11 +85,57 @@ export class BinaryMoipSpacesCard extends LitElement {
     return { type: "custom:binary-moip-spaces-card", inputs: [] };
   }
 
-  protected override updated(): void {
-    if (this.hass && !this._fetched) {
-      this._fetched = true;
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    // Dashboard navigation recreates the element; allow a fresh subscription.
+    this._subscribed = false;
+  }
+
+  public override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._unsub?.();
+    this._unsub = undefined;
+    this._subscribed = false;
+  }
+
+  /**
+   * Subscribe to the Listening Spaces model so its live fields stay current.
+   *
+   * The model carries `active`, `source` and per-zone `online`, all of which
+   * change when an amplifier does — a one-shot read goes stale exactly when the
+   * display matters. Falls back to a single read when the frontend exposes no
+   * raw connection, or the integration predates the subscribe command.
+   */
+  private _subscribeSpaces(): void {
+    if (this._subscribed || !this.hass) return;
+    this._subscribed = true;
+
+    const conn = this.hass.connection;
+    if (!conn) {
       void this._fetchSpaces();
+      return;
     }
+    conn
+      .subscribeMessage<{ spaces: WsSpace[] }>(
+        (m) => {
+          this._spaces = m.spaces ?? [];
+          this._error = null;
+        },
+        spacesSubscribeMsg()
+      )
+      .then((unsub) => {
+        // Detached while subscribing — don't leak the listener.
+        if (this.isConnected) this._unsub = unsub;
+        else unsub();
+      })
+      .catch(() => {
+        this._subscribed = false;
+        void this._fetchSpaces();
+      });
+  }
+
+  protected override updated(): void {
+    this._subscribeSpaces();
     let vol = this._pendingVol;
     let changed = false;
     for (const [id, p] of Object.entries(vol)) {

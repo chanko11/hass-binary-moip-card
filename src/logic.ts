@@ -367,9 +367,21 @@ export function browseMsg(
 
 // --- Listening Spaces: calibration card service/ws builders ------------------
 
-/** Websocket message to read all Listening Spaces (binary_moip/spaces). */
+/** Websocket message to read all Listening Spaces once (binary_moip/spaces). */
 export function spacesWsMsg(): Record<string, unknown> {
   return { type: "binary_moip/spaces" };
+}
+
+/**
+ * Websocket message to subscribe to the Listening Spaces model.
+ *
+ * Prefer this over {@link spacesWsMsg}: the model carries live fields (`active`,
+ * `source`, per-zone `online`, `offline_zones`), so a one-shot read goes stale
+ * as soon as an amplifier changes state. The integration sends the current
+ * model immediately on subscribe, then again on every coordinator refresh.
+ */
+export function spacesSubscribeMsg(): Record<string, unknown> {
+  return { type: "binary_moip/spaces/subscribe" };
 }
 
 export interface CalibrationPlayOpts {
